@@ -132,6 +132,18 @@
 - **路径输入**：nebius 已在用 `Input({value, placeholder, onInput, onSubmit})`，烧录用文本框输入 `.bin` 路径；
   `Link({href,label})` 能否打开本地文件夹留给 spike。
 
+## 6.3 Spike 之后的方案调整（用户选 A，2026-10-28）
+
+Spike 结果见 `docs/spike-notes.md` 第二节：Velloc 不允许插件启动的进程脱离它的作业对象，`$.process.run`
+返回时子进程一并被结束；但不等待的长时 `$.process.run`（timeoutMs 24 小时）可以一直运行，并在 Velloc 退出时被结束。
+
+- 在 Velloc 里，监视进程和烧录任务都作为**不等待的长时 `$.process.run`** 运行，随 Velloc 会话存亡；
+  关闭 Velloc 即释放串口。由面板启动的监视进程不做心跳检查（`--no-heartbeat`）。
+- 命令行 / Claude Code 里的 `monitor start`、不带 `--wait` 的 `flash` 仍按 5.1 分离启动并保留心跳。
+- 监视进程把最后 200 行写进状态文件（`tail`）；面板用 `$.fs.read` 直接读状态文件和烧录任务文件，不再每秒启动 Python。
+- 面板里没有输入框（Velloc 不显示 `Input`）：烧录文件用 `/esp32 flash <路径>` 指定，或在聊天里让 AI 烧录（先问用户）。
+- `Link` 打不开本地文件夹：日志文件夹以文字路径显示。
+
 ## 7. 留给实现者
 
 文件拆分（建议监视进程逻辑单独成 `scripts/monitor.py` 或保留在同一脚本内由实现者定）、轮询间隔细节、
