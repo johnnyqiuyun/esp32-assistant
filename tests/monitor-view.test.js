@@ -129,3 +129,29 @@ test('test_pane_without_monitors_has_no_monitor_section', () => {
     missingDriver: [], python: { state: 'ok' }, polling: 'background' }
   assert.equal(find(paneTree(ui, view, t, noop), 'mon-start:COM4'), undefined)
 })
+
+test('test_clear_ignored_after_monitor_restart', () => {
+  const lines = [0, 1, 2].map(i => ({ i, text: `fresh-${i}` }))
+  const base = { boards: [{ ...board, serial: 'S', key: 'K', probedAt: null, reason: null, detail: null }],
+    missingDriver: [], python: { state: 'ok' }, polling: 'background', flashDraft: {}, logDir: 'C:\d', linkOpensFolder: false }
+  const monitors = { COM4: { ...mon({ startedAt: 2000 }, lines) } }
+  const stale = paneTree(ui, { ...base, monitors, clearAt: { COM4: { at: 3000, startedAt: 1000 } } }, t, noop)
+  assert.ok(texts(stale).includes('fresh-0'))
+  const same = paneTree(ui, { ...base, monitors, clearAt: { COM4: { at: 2, startedAt: 2000 } } }, t, noop)
+  assert.ok(!texts(same).includes('fresh-1') && texts(same).includes('fresh-2'))
+})
+
+test('test_flash_failed_uses_flash_text', () => {
+  const m = { ...mon(), flash: { state: 'failed', reason: 'interrupted', file: 'a.bin' } }
+  const s = texts(render(m))
+  assert.ok(s.includes(zh['flash.error.interrupted']))
+  assert.ok(!s.includes(zh['fail.error']))
+})
+
+test('test_locale_strings_have_no_control_chars', () => {
+  for (const [k, v] of Object.entries(zh)) assert.ok(!/[\u0000-\u001f]/.test(v), k)
+})
+
+test('test_flash_error_texts_for_image_reasons', () => {
+  for (const r of ['wrong_chip', 'not_merged', 'interrupted']) assert.equal(typeof zh[`flash.error.${r}`], 'string', r)
+})

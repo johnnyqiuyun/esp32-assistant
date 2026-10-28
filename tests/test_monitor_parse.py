@@ -76,8 +76,14 @@ class ImageTest(unittest.TestCase):
             f.write(data)
         return path
 
+    def merged(self):
+        data = bytearray(0x9000)
+        data[0], data[12] = 0xE9, 9
+        data[0x8000:0x8002] = b"\xaa\x50"
+        return self.make(bytes(data))
+
     def test_check_image_ok(self):
-        self.assertEqual(mon.check_image(self.make(b"\xe9" + b"\0" * 1023), 4194304), (True, None))
+        self.assertEqual(mon.check_image(self.merged(), 4194304), (True, None))
 
     def test_check_image_missing(self):
         self.assertEqual(mon.check_image(os.path.join(self.dir, "nope.bin"), None), (False, "missing"))
@@ -89,7 +95,7 @@ class ImageTest(unittest.TestCase):
         self.assertEqual(mon.check_image(self.make(b"\x7fELF" + b"\0" * 100), None), (False, "not_esp_image"))
 
     def test_check_image_too_big(self):
-        path = self.make(b"\xe9" + b"\0" * 1023)
+        path = self.merged()
         self.assertEqual(mon.check_image(path, 512), (False, "too_big"))
         self.assertEqual(mon.check_image(path, None), (True, None))
 

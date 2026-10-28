@@ -122,3 +122,16 @@ export function parseFlashArgs(args, boards) {
   }
   return { port, path }
 }
+
+const JOB_STALE_MS = 90000
+
+/**
+ * A flash job as the pane should show it: a 'running' job whose file has not been updated for
+ * JOB_STALE_MS belongs to a process that died (Velloc quit, a timeout); show it as interrupted.
+ * `updatedAt` is in seconds.
+ */
+export function liveJob(job, nowMs) {
+  if (!job || job.state !== 'running') return job
+  if (nowMs - (job.updatedAt ?? 0) * 1000 <= JOB_STALE_MS) return job
+  return { ...job, state: 'failed', reason: 'interrupted' }
+}

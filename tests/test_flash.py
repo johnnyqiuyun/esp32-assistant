@@ -84,10 +84,15 @@ class FlashCliTest(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         os.environ["ESP32_BRINGUP_HOME"] = self.dir
 
-    def image(self, first=b"\xe9", size=1024):
+    def image(self, first=b"\xe9", size=0x9000):
+        """A merged ESP32-S3 image layout: magic, chip id 9 at byte 12, partition table at 0x8000."""
         path = os.path.join(self.dir, "fw.bin")
         with open(path, "wb") as f:
             f.write(first)
+            f.seek(12)
+            f.write(b"\x09")
+            f.seek(0x8000)
+            f.write(b"\xaa\x50")
             f.seek(size - 1)
             f.write(b"\0")
         return path
@@ -96,7 +101,7 @@ class FlashCliTest(unittest.TestCase):
         path = self.image()
         code, out = run_cli("flash", "--port", "COM9", path, "--json")
         self.assertEqual((code, out["ok"], out["reason"]), (2, False, "needs_yes"))
-        self.assertEqual(out["plan"], {"port": "COM9", "file": path, "bytes": 1024})
+        self.assertEqual(out["plan"], {"port": "COM9", "file": path, "bytes": 0x9000})
 
     def test_cli_bad_image(self):
         code, out = run_cli("flash", "--port", "COM9", self.image(first=b"\x7f"), "--yes", "--json")

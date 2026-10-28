@@ -81,5 +81,8 @@
   "flash.error.no_response": "The board did not answer",
   "flash.error.error": "Flash error",
   "flash.hint": "To flash: type /esp32 flash <full path of a merged .bin> {port}",
-  "flash.error.no_board": "No board to flash; add the port, e.g. /esp32 flash C:\fw\u0007.bin COM4"
+  "flash.error.no_board": "No board to flash; add the port, e.g. /esp32 flash C:/fw/a.merged.bin COM4",
+  "flash.error.wrong_chip": "This image was not built for an ESP32-S3",
+  "flash.error.not_merged": "Not a merged image (no partition table at 0x8000). Pick the .merged.bin, not the app or bootloader .bin",
+  "flash.error.interrupted": "Flashing was interrupted (Velloc closed or a timeout); the board may hold an incomplete program, flash again"
 }

@@ -173,3 +173,24 @@ test('test_live_monitor_fresh_and_stale', () => {
   assert.equal(liveMonitor(st, 1010_000), null)
   assert.equal(liveMonitor(null, 1000_000), null)
 })
+
+// ---- final review: stale flash jobs
+import { liveJob } from '../hooks/core.js'
+
+test('test_live_job_running_fresh', () => {
+  const job = { state: 'running', percent: 37, updatedAt: 1000 }
+  assert.equal(liveJob(job, 1030_000), job)
+})
+
+test('test_live_job_running_stale_is_interrupted', () => {
+  const out = liveJob({ state: 'running', percent: 37, updatedAt: 1000 }, 1100_000)
+  assert.equal(out.state, 'failed')
+  assert.equal(out.reason, 'interrupted')
+  assert.equal(liveJob({ state: 'running', percent: 5 }, 1100_000).reason, 'interrupted')
+})
+
+test('test_live_job_done_untouched', () => {
+  const job = { state: 'done', updatedAt: 1 }
+  assert.equal(liveJob(job, 1100_000), job)
+  assert.equal(liveJob(null, 1), null)
+})

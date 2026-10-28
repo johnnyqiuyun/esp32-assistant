@@ -457,21 +457,26 @@ def run_esptool_streaming(argv, on_line):
     """Run esptool, calling on_line for every line or carriage-return-separated progress update."""
     p = subprocess.Popen([sys.executable, "-m", "esptool"] + argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     out, buf = [], b""
-    while True:
-        chunk = p.stdout.read1(256) if hasattr(p.stdout, "read1") else p.stdout.read(1)
-        if not chunk:
-            break
-        buf += chunk
-        parts = re.split(rb"[\r\n]", buf)
-        buf = parts.pop()
-        for part in parts:
-            if part:
-                text = part.decode("utf-8", errors="replace")
-                out.append(text)
-                on_line(text)
-    if buf:
-        out.append(buf.decode("utf-8", errors="replace"))
-    return p.wait(timeout=FLASH_TIMEOUT_S), "\n".join(out)
+    try:
+        while True:
+            chunk = p.stdout.read1(256)
+            if not chunk:
+                break
+            buf += chunk
+            parts = re.split(rb"[\r\n]", buf)
+            buf = parts.pop()
+            for part in parts:
+                if part:
+                    text = part.decode("utf-8", errors="replace")
+                    out.append(text)
+                    on_line(text)
+        if buf:
+            out.append(buf.decode("utf-8", errors="replace"))
+        return p.wait(timeout=FLASH_TIMEOUT_S), "\n".join(out)
+    finally:
+        if p.poll() is None:  # we are leaving early: never leave esptool holding the port
+            p.kill()
+            p.wait()
 
 
 def _esptool5():

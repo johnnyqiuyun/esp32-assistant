@@ -76,14 +76,21 @@ Only merged single images, written at 0x0:
 - ESP-IDF: `idf.py merge-bin` (output in `build/`).
 
 1. Run `flash --port COMx FILE --json` **without** `--yes`. It checks the file (exists, not empty,
-   first byte 0xE9, not larger than the flash given with `--flash-size`) and returns
-   `needs_yes` with the plan, or `bad_image` with the reason (`missing`, `empty`,
-   `not_esp_image` (an ELF or other file), `too_big`).
+   first byte 0xE9, built for ESP32-S3, partition table at 0x8000, not larger than the flash
+   given with `--flash-size`) and returns `needs_yes` with the plan, or `bad_image` with the
+   reason (`missing`, `empty`, `not_esp_image` (an ELF or other file), `wrong_chip`,
+   `not_merged` (an app-only or bootloader .bin, which would brick the boot if written at 0x0),
+   `too_big`).
 2. Tell the user the port, the file and its size, and that it replaces the program on the board.
    Ask. Only after a clear yes:
 3. `flash --port COMx FILE --yes --wait` (add `--flash-size 16MB` from `probe` when known). It
    pauses a monitor, writes at 460800 baud with verification, and resumes the monitor, which
    resets the board. Then show the new boot log (`monitor status` or `log`).
+   **Run it with the longest tool timeout you have (e.g. 600000 ms).** A tool timeout kills the
+   process mid-write and leaves a half-written board. A 4 MB image takes about 20 s, a 16 MB
+   one about 80 s. If the image may take longer than your timeout, run it **without** `--wait`
+   (it starts a background job) and poll `monitor status --port COMx --json` until `flash.state`
+   is `done` or `failed`. Never interrupt a flash that is running.
 
 Failure reasons: `busy` (port held by another program), `no_response` (hold BOOT and press RST),
 `already_flashing`, `error`.

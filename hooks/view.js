@@ -55,10 +55,14 @@ export function paneTree(ui, view, t, actions) {
   const children = view.boards.map(b => {
     const card = boardTree(ui, b, t, actions)
     if (!view.monitors) return card
-    const opts = { clearAt: view.clearAt?.[b.port] ?? 0, draft: view.flashDraft?.[b.port] ?? null,
+    const mon = view.monitors[b.port]
+    const cleared = view.clearAt?.[b.port]
+    // Line numbers restart with every monitor process, so a Clear applies only to the run it was made in.
+    const clearAt = cleared && cleared.startedAt === mon?.monitor?.startedAt ? cleared.at : 0
+    const opts = { clearAt, draft: view.flashDraft?.[b.port] ?? null,
       linkOpensFolder: !!view.linkOpensFolder, logDir: view.logDir ?? '', now: view.now ?? Date.now() }
     return Box({ key: `card:${b.port}`, flexDirection: 'column', gap: 1,
-      children: [card, monitorTree(ui, b, view.monitors[b.port], t, actions, opts)] })
+      children: [card, monitorTree(ui, b, mon, t, actions, opts)] })
   })
   for (const m of view.missingDriver ?? []) {
     children.push(Box({ key: `driver:${m.vid}:${m.pid}:${m.name}`, flexDirection: 'column', children: [

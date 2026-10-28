@@ -62,7 +62,7 @@ function flashSection(ui, port, flash, draft, t, actions) {
   if (flash?.state === 'running') return caption(t('flash.progress', { percent: flash.percent ?? 0, file: file(flash.file) }), { color: 'yellow' })
   const children = []
   if (flash?.state === 'done') children.push(caption(t('flash.done', { file: file(flash.file) }), { color: 'green' }))
-  if (flash?.state === 'failed') children.push(caption(t('flash.failed', { reason: t(`fail.${flash.reason}`) }), { color: 'red' }))
+  if (flash?.state === 'failed') children.push(caption(t('flash.failed', { reason: t(`flash.error.${flash.reason}`) }), { color: 'red' }))
   if (draft?.confirming) {
     children.push(
       caption(t('flash.confirm', { file: file(draft.path), path: draft.path, port }), { color: 'red' }),

@@ -96,16 +96,33 @@ class LiveSummary:
         }
 
 
+ESP32S3_CHIP_ID = 9  # byte 12 of the image header (extended header chip_id)
+PARTITION_TABLE_OFFSET = 0x8000
+PARTITION_MAGIC = b"\xaa\x50"
+
+
 def check_image(path, flash_bytes):
-    """(True, None) for a flashable merged image, else (False, 'missing'|'empty'|'not_esp_image'|'too_big')."""
+    """(True, None) for a merged ESP32-S3 image that may be written at 0x0, else (False, reason):
+    'missing' | 'empty' | 'not_esp_image' | 'wrong_chip' | 'not_merged' | 'too_big'.
+
+    A merged image starts with the bootloader (magic 0xE9, chip id 9) and has the partition
+    table at 0x8000; an app-only .bin (also 0xE9) written at 0x0 would leave the board unbootable.
+    """
     if not os.path.isfile(path):
         return False, "missing"
     size = os.path.getsize(path)
     if size == 0:
         return False, "empty"
     with open(path, "rb") as f:
-        if f.read(1)[0] != ESP_IMAGE_MAGIC:
-            return False, "not_esp_image"
+        header = f.read(16)
+        f.seek(PARTITION_TABLE_OFFSET)
+        table = f.read(2)
+    if header[0] != ESP_IMAGE_MAGIC:
+        return False, "not_esp_image"
+    if len(header) < 13 or header[12] != ESP32S3_CHIP_ID:
+        return False, "wrong_chip"
+    if table != PARTITION_MAGIC:
+        return False, "not_merged"
     if flash_bytes is not None and size > flash_bytes:
         return False, "too_big"
     return True, None
@@ -152,12 +169,24 @@ def read_json(path):
         return None
 
 
+REPLACE_TRIES = 10
+
+
 def write_json_atomic(path, obj):
+    """Write via a temp file and replace. On Windows the replace fails while a reader has the
+    target open, so it is retried for a moment; the last failure propagates."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False)
-    os.replace(tmp, path)
+    for attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(0.02)
 
 
 def touch_heartbeat(port):
@@ -196,7 +225,18 @@ def pid_alive(pid):
         kernel32.CloseHandle(handle)
 
 
+_WINERROR = re.compile(r"PermissionError\(13, .*, None, (\d+)\)")
+
+
 def _is_busy(exc):
+    """Another program holds the port: Windows error 5 (access denied). Other open errors, such as
+    31 right after a USB port re-enumerates, are transient and retried instead."""
+    winerror = getattr(exc, "winerror", None)
+    if winerror is None:
+        m = _WINERROR.search(str(exc))
+        winerror = int(m.group(1)) if m else None
+    if winerror is not None:
+        return winerror == 5
     return isinstance(exc, PermissionError) or any(m in str(exc) for m in _BUSY_MARKERS)
 
 
@@ -339,6 +379,12 @@ class Monitor:
             return False
 
     def _publish(self):
+        try:
+            self._write_state()
+        except OSError:
+            pass  # a reader held the file through every retry; the next step publishes again
+
+    def _write_state(self):
         write_json_atomic(self.p["state"], {
             "pid": os.getpid(), "port": self.port, "baud": self.baud, "key": self.key,
             "state": self.state, "reason": self.reason, "log": self.log_path,
@@ -427,8 +473,12 @@ class FlashJob:
                     "reason": None, "detail": None}
 
     def _save(self, **changes):
-        self.job.update(changes)
-        write_json_atomic(job_path(self.port), self.job)
+        """Never raises: losing one progress update must not abort a flash in progress."""
+        self.job.update(changes, updatedAt=self.clock())
+        try:
+            write_json_atomic(job_path(self.port), self.job)
+        except OSError:
+            pass
 
     def _on_line(self, line):
         pct = parse_progress(line)

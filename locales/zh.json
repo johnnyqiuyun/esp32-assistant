@@ -81,5 +81,8 @@
   "flash.error.no_response": "板子没有响应",
   "flash.error.error": "烧录出错",
   "flash.hint": "要烧录：在输入框输入 /esp32 flash <合并好的 .bin 完整路径> {port}",
-  "flash.error.no_board": "没有找到要烧录的板子，请在命令里写上端口，例如 /esp32 flash C:\fw\u0007.bin COM4"
+  "flash.error.no_board": "没有找到要烧录的板子，请在命令里写上端口，例如 /esp32 flash C:/fw/a.merged.bin COM4",
+  "flash.error.wrong_chip": "这个固件不是给 ESP32-S3 编译的",
+  "flash.error.not_merged": "这不是合并好的固件（缺少 0x8000 处的分区表）。请选 .merged.bin，不要选单独的 app 或 bootloader .bin",
+  "flash.error.interrupted": "烧录被中断（Velloc 关闭或超时），板子上的程序可能不完整，请重新烧录"
 }

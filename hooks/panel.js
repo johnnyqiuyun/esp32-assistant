@@ -16,7 +16,7 @@
  */
 
 import {
-  applyProbe, forgetStopped, liveMonitor, newPorts, parseFlashArgs, pythonCandidates, recordKey, reconcile, shouldAutostart,
+  applyProbe, forgetStopped, liveJob, liveMonitor, newPorts, parseFlashArgs, pythonCandidates, recordKey, reconcile, shouldAutostart,
 } from './core.js'
 import { loadTexts } from './texts.js'
 import { paneTree, statusText } from './view.js'
@@ -96,7 +96,8 @@ export function register(on) {
       const state = await readJson($, `${home}\\monitors\\${port}.json`)
       const flash = await readJson($, `${home}\\jobs\\${port}.flash.json`)
       const live = liveMonitor(state, now)
-      next[port] = { monitor: live ?? (state ? { ...state, state: 'stopped' } : null), lines: live?.tail ?? state?.tail ?? [], flash }
+      next[port] = { monitor: live ?? (state ? { ...state, state: 'stopped' } : null), lines: live?.tail ?? state?.tail ?? [],
+        flash: liveJob(flash, now) }
     }
     monitors = next
   }
@@ -274,7 +275,7 @@ export function register(on) {
     monitorRetry: port => { void control(port, 'retry') },
     clear: port => {
       const lines = monitors[port]?.lines ?? []
-      clearAt[port] = lines.length ? lines.at(-1).i + 1 : 0
+      clearAt[port] = { at: lines.length ? lines.at(-1).i + 1 : 0, startedAt: monitors[port]?.monitor?.startedAt ?? null }
       void quietly(() => publish(root))
     },
     flashConfirm: port => {
