@@ -1,13 +1,14 @@
 ---
 name: esp32s3-bringup
-description: Use when an ESP32-S3 board (DevKitC-1, N16R8 modules, any S3 dev board) is plugged in over USB and the user wants to find it, check whether it works, or read its boot log. Also read when esptool cannot connect, when no COM port appears, when Device Manager shows a CP210x/CH340 device with error code 28, when the boot log is garbage, or when the board keeps rebooting.
+description: Use when an ESP32-S3 board (DevKitC-1, N16R8 modules, any S3 dev board) is plugged in over USB and the user wants to find it, check whether it works, read its boot log, watch its serial output or Wi-Fi state, or flash a merged .bin (Arduino or ESP-IDF). Also read when esptool cannot connect, when no COM port appears, when Device Manager shows a CP210x/CH340 device with error code 28, when the boot log is garbage, or when the board keeps rebooting.
 ---
 
 # ESP32-S3 bring-up
 
-All hardware access goes through one script. Everything in it is **read-only**:
-it never writes flash, eFuses or memory. Do not run esptool write/erase commands
-for the user from this skill.
+All hardware access goes through one script. Everything in it is **read-only except
+`flash`**, the one command that writes flash, and it refuses to write without `--yes`.
+Never run `flash --yes`, or any esptool write/erase/efuse command, without first telling
+the user the port, the file and its size and getting their explicit agreement.
 
 ```
 <python> "${CLAUDE_PLUGIN_ROOT}/scripts/esp32_bringup.py" <command> [--port COMx] [--json]
@@ -18,6 +19,9 @@ for the user from this skill.
 | `ports [--drivers]` | Lists USB serial ports from CP210x / CH340 / FTDI / Espressif native USB, with serial numbers. `--drivers` also lists such devices whose driver is missing (Windows). Does not open any port. | No |
 | `probe --port COMx` | Reads chip, revision, features, PSRAM, crystal, MAC and flash (esptool `flash-id`). On failure reports `busy`, `no_response` or `error`. | Once |
 | `log --port COMx [--seconds 6]` | Resets the board, captures 115200-baud output, and prints a summary. | Once |
+| `monitor start\|status\|stop\|pause\|resume\|reset\|retry\|list --port COMx` | Background serial monitor (see below). | `start` no; `reset` yes |
+| `reset --port COMx` | Resets the board (through its monitor when one runs). | Once |
+| `flash --port COMx FILE.bin --yes --wait` | **Writes** a merged image at 0x0 (see below). | Once, after writing |
 
 `--port` defaults to `$ESP_PORT`. Once you know the board's port, pass it on every call.
 
@@ -48,6 +52,50 @@ for the user from this skill.
      makes it reappear in download mode.
 3. **Boot log**: run `log` and explain the summary (see below).
 
+## Monitor
+
+- `monitor start` starts a background process that owns the port, writes every line with a
+  timestamp to `%LOCALAPPDATA%\esp32s3-bringup\logs\<USB serial or port>\*.log` and keeps a state
+  file with a live summary (boots, last reset reason, crash, errors/warnings, Wi-Fi state, IP,
+  disconnect reason, RSSI). `monitor status --json` returns it plus the last lines.
+  Opening the port does not reset the board.
+- `probe`, `log` and `flash` pause a running monitor, then resume it and let it reset the board so
+  the boot banner lands in the log. `log` with a monitor running reads the monitor's log instead of
+  opening the port.
+- States: `running`, `paused`, `waiting` (port vanished, reopened when it is back), `busy` (another
+  program holds the port; not retried until `monitor retry` or an unplug/replug), `stopped`.
+- Before flashing or monitoring with **another** tool (idf.py, Arduino IDE), run `monitor pause`
+  (or `stop`), or press Pause in the Velloc pane.
+- A monitor started from the command line exits on its own after 10 minutes without a heartbeat
+  (`monitor status` refreshes it). Monitors started by the Velloc pane end with the Velloc session.
+
+## Flashing
+
+Only merged single images, written at 0x0:
+- Arduino IDE: Sketch → Export Compiled Binary → `<sketch>.ino.merged.bin`.
+- ESP-IDF: `idf.py merge-bin` (output in `build/`).
+
+1. Run `flash --port COMx FILE --json` **without** `--yes`. It checks the file (exists, not empty,
+   first byte 0xE9, not larger than the flash given with `--flash-size`) and returns
+   `needs_yes` with the plan, or `bad_image` with the reason (`missing`, `empty`,
+   `not_esp_image` (an ELF or other file), `too_big`).
+2. Tell the user the port, the file and its size, and that it replaces the program on the board.
+   Ask. Only after a clear yes:
+3. `flash --port COMx FILE --yes --wait` (add `--flash-size 16MB` from `probe` when known). It
+   pauses a monitor, writes at 460800 baud with verification, and resumes the monitor, which
+   resets the board. Then show the new boot log (`monitor status` or `log`).
+
+Failure reasons: `busy` (port held by another program), `no_response` (hold BOOT and press RST),
+`already_flashing`, `error`.
+
+In Velloc the user can also flash from the pane: `/esp32 flash <path> [COMx]`, then Confirm.
+
+## Wi-Fi disconnect reasons (ESP-IDF)
+
+2 auth expired · 8 left on purpose · 15 4-way handshake timeout (wrong password?) · 200 beacon
+timeout (weak signal / AP off) · 201 network not found · 202 auth failed (wrong password?) ·
+203 association failed · 204 handshake timeout (wrong password?) · 205 connection failed.
+
 ## Reading the ESP32-S3 boot log
 
 Unlike the ESP8266, the S3 prints ROM and app output at the same baud rate, **115200**.
@@ -73,8 +121,10 @@ Unlike the ESP8266, the S3 prints ROM and app output at the same baud rate, **11
 In Velloc this plugin also runs a mod (`hooks/panel.js`). `/esp32` opens a pane
 that lists ESP serial ports every 2 s **without opening them**. A board is
 remembered by USB serial number after it has been checked once. The pane checks
-a board only when the user presses **Check**, so it never resets a board by
-itself. If the pane says "port busy", the user's monitor or flasher has the port,
+a board only when the user presses **Check**. For a board known to be an ESP
+(checked before, or Espressif native USB) it starts the serial monitor by itself; that
+opens the port without resetting the board. Stop in the pane keeps it stopped until the
+board is unplugged. If the pane says "port busy", the user's monitor or flasher has the port,
 which is expected.
 
 ## Reporting

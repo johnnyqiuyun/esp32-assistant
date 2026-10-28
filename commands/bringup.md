@@ -1,5 +1,5 @@
 ---
-description: Find a USB-connected ESP32-S3, check it read-only and read its boot log
+description: Find a USB-connected ESP32-S3, check it (read-only) and read its boot log
 argument-hint: "[COM port]"
 ---
 
