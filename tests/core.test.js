@@ -79,3 +79,10 @@ test('test_record_key', () => {
   assert.equal(recordKey(cp()), KEY)
   assert.equal(recordKey(ch('COM5')), null)
 })
+
+test('test_keyless_checked_in_session_shows_info', () => {
+  const [b] = reconcile([ch('COM5')], {}, { COM5: { state: 'checked', info: info(), probedAt: 'T' } })
+  assert.equal(b.state, 'known')
+  assert.equal(b.info.chip, 'ESP32-S3')
+  assert.equal(b.probedAt, 'T')
+})

@@ -22,6 +22,7 @@
   "fail.busy": "端口被占用（关掉 monitor 或其他串口工具后再试）",
   "fail.no_response": "板子没有响应（检查数据线，或按住 BOOT 再按 RST 进入下载模式）",
   "fail.error": "检测出错",
+  "fail.incomplete": "读到了芯片，但 MAC 或 Flash 大小读不出来（Flash 可能有问题）",
   "btn.probe": "检测",
   "btn.reprobe": "重新检测",
   "btn.refresh": "刷新",

@@ -55,3 +55,24 @@ class PortsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MissingDriversRobustTest(unittest.TestCase):
+    def test_parse_pnp_malformed(self):
+        self.assertEqual(cli.parse_pnp("not json {"), [])
+
+    def test_missing_drivers_timeout_is_empty(self):
+        import subprocess
+        from unittest import mock
+        with mock.patch.object(cli.os, "name", "nt"), \
+                mock.patch.object(cli.subprocess, "run", side_effect=subprocess.TimeoutExpired("powershell", 1)):
+            self.assertEqual(cli.missing_drivers(), [])
+
+    def test_missing_drivers_no_powershell_is_empty(self):
+        from unittest import mock
+        with mock.patch.object(cli.os, "name", "nt"), \
+                mock.patch.object(cli.subprocess, "run", side_effect=FileNotFoundError("powershell")):
+            self.assertEqual(cli.missing_drivers(), [])
+
+    def test_driver_query_timeout_below_mod_budget(self):
+        self.assertLess(cli.PNP_TIMEOUT_S, 10)

@@ -15,7 +15,7 @@
  * Runtime facts (worker lifetime, status line) are from docs/spike-notes.md.
  */
 
-import { applyProbe, newPorts, pythonCandidates, reconcile } from './core.js'
+import { applyProbe, newPorts, pythonCandidates, recordKey, reconcile } from './core.js'
 import { loadTexts } from './texts.js'
 import { paneTree, statusText } from './view.js'
 
@@ -35,6 +35,7 @@ export function register(on) {
   let root
   let t = key => key
   let python = null // argv prefix of a working interpreter
+  let pythonResolved = false // a failed lookup is cached too; Refresh or /esp32 retries it
   let pythonState = { state: 'ok' }
   let records = {}
   let transient = {}
@@ -69,6 +70,7 @@ export function register(on) {
   }
 
   async function resolvePython($) {
+    pythonResolved = true
     const env = {
       ESP_PYTHON: await quietly(() => $.env.get('ESP_PYTHON')),
       LOCALAPPDATA: await quietly(() => $.env.get('LOCALAPPDATA')),
@@ -99,7 +101,7 @@ export function register(on) {
     if (scanning) return
     scanning = true
     try {
-      if (!python && !(await resolvePython($))) return
+      if (!python && (pythonResolved || !(await resolvePython($)))) return
       let result
       try {
         result = await runScript($, ['ports', '--json', ...(withDrivers ? ['--drivers'] : [])], PORTS_TIMEOUT_MS)
@@ -143,7 +145,8 @@ export function register(on) {
       records = applyProbe(stored, port, result)
       await quietly(() => $.store.set(STORE_KEY, records))
       const { [portName]: _done, ...rest } = transient
-      transient = rest
+      // A device with no serial number has no record; keep its result for this session.
+      transient = recordKey(port) ? rest : { ...rest, [portName]: { state: 'checked', info: result, probedAt: result.probed_at } }
     } else {
       transient = { ...transient, [portName]: { state: 'failed', reason: result?.reason ?? 'error', detail: result?.detail ?? null } }
     }
@@ -154,6 +157,7 @@ export function register(on) {
     probe: portName => { void probe(portName) },
     refresh: () => {
       python = null
+      pythonResolved = false
       void doScan(root, true)
     },
   }
@@ -163,7 +167,7 @@ export function register(on) {
     t = await loadTexts($)
     await quietly(() => $.command.register({ name: COMMAND, description: t('command.description') }))
     records = (await quietly(() => $.store.get(STORE_KEY))) ?? {}
-    await doScan($, true)
+    void doScan($, true) // finding Python and asking Windows for drivers takes seconds; don't hold the session start
     $.clock.every(POLL_MS, () => {
       if (!BACKGROUND_POLL && !paneOpen) return
       ticks += 1
@@ -173,6 +177,7 @@ export function register(on) {
   })
 
   on('command.run', { command: COMMAND }, async $ => {
+    if (!python) pythonResolved = false
     await doScan($, true)
     await $.ui.open({ id: PANE_ID, title: t('pane.title'), focus: true })
     return {}

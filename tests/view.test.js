@@ -102,3 +102,7 @@ test('test_status_text', () => {
 test('test_locales_same_keys', () => {
   assert.deepEqual(Object.keys(locale('en')).sort(), Object.keys(zh).sort())
 })
+
+test('test_every_failure_reason_has_text', () => {
+  for (const reason of ['busy', 'no_response', 'error', 'incomplete']) assert.equal(typeof zh[`fail.${reason}`], 'string', reason)
+})

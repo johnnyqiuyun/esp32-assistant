@@ -22,6 +22,7 @@
   "fail.busy": "Port is busy (close the monitor or other serial tool and retry)",
   "fail.no_response": "The board did not answer (check the cable, or hold BOOT and press RST for download mode)",
   "fail.error": "Check failed",
+  "fail.incomplete": "Chip found, but its MAC or flash size could not be read (the flash may be faulty)",
   "btn.probe": "Check",
   "btn.reprobe": "Check again",
   "btn.refresh": "Refresh",

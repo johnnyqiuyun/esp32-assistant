@@ -48,5 +48,38 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(cli.classify_failure("something unexpected"), "error")
 
 
+
+class ProbeResultTest(unittest.TestCase):
+    def test_probe_result_ok(self):
+        r = cli.probe_result(fixture("flash_id_ok.txt"), 0, "COM4")
+        self.assertIs(r["ok"], True)
+        self.assertEqual(r["port"], "COM4")
+        self.assertEqual(r["chip"], "ESP32-S3")
+        self.assertIn("probed_at", r)
+
+    def test_probe_result_unknown_flash_is_not_ok(self):
+        text = fixture("flash_id_ok.txt").replace("Detected flash size: 16MB", "Detected flash size: Unknown")
+        r = cli.probe_result(text, 0, "COM4")
+        self.assertIs(r["ok"], False)
+        self.assertEqual(r["reason"], "incomplete")
+
+    def test_probe_result_missing_mac_is_not_ok(self):
+        text = fixture("flash_id_ok.txt").replace("MAC:                74:4d:bd:9d:b5:44", "")
+        self.assertEqual(cli.probe_result(text, 0, "COM4")["reason"], "incomplete")
+
+    def test_probe_result_failure_classified(self):
+        r = cli.probe_result("could not open port 'COM4': PermissionError(13, 'x')", 2, "COM4")
+        self.assertEqual((r["ok"], r["reason"]), (False, "busy"))
+
+    def test_parse_esptool4_output(self):
+        info = cli.parse_flash_id(fixture("flash_id_esptool4.txt"))
+        self.assertEqual((info["chip"], info["package"], info["revision"]), ("ESP32-S3", "QFN56", "v0.2"))
+        self.assertEqual(info["crystal_mhz"], 40)
+        self.assertEqual(info["psram"], "8MB")
+        self.assertEqual(info["mac"], "74:4d:bd:9d:b5:44")
+        self.assertEqual(info["flash"]["size"], "16MB")
+        self.assertEqual(info["flash"]["voltage"], "3.3V")
+
+
 if __name__ == "__main__":
     unittest.main()

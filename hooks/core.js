@@ -16,21 +16,23 @@ export function recordKey(port) {
 
 /**
  * One Board per scanned port, in scan order.
- * `transient`: `{ [port]: { state: 'probing' } | { state: 'failed', reason, detail } }`.
+ * `transient`: `{ [port]: { state: 'probing' } | { state: 'failed', reason, detail } | { state: 'checked', info, probedAt } }`.
  */
 export function reconcile(scan, records, transient) {
   return scan.map(port => {
     const key = recordKey(port)
     const record = key ? records[key] : undefined
     const live = transient[port.port]
+    // 'checked': a device with no serial number, checked in this session only.
+    const checked = live?.state === 'checked' ? live : null
     return {
       port: port.port,
       bridge: port.bridge,
       serial: port.serial ?? null,
       key,
-      state: live?.state ?? (record ? 'known' : 'unprobed'),
-      info: record?.info ?? null,
-      probedAt: record?.probedAt ?? null,
+      state: checked ? 'known' : live?.state ?? (record ? 'known' : 'unprobed'),
+      info: checked?.info ?? record?.info ?? null,
+      probedAt: checked?.probedAt ?? record?.probedAt ?? null,
       reason: live?.state === 'failed' ? live.reason : null,
       detail: live?.state === 'failed' ? live.detail ?? null : null,
     }

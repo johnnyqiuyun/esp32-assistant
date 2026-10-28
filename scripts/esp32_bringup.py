@@ -36,6 +36,7 @@ PNP_QUERY = (
     "$_.ConfigManagerErrorCode -ne 0 } | Select-Object Name,DeviceID,ConfigManagerErrorCode | "
     "ConvertTo-Json -Compress" % VID_PATTERN
 )
+PNP_TIMEOUT_S = 6  # below the Velloc pane's 10 s budget for a whole `ports` run
 
 
 def emit(obj):
@@ -67,7 +68,10 @@ def parse_pnp(text):
     text = (text or "").strip()
     if not text:
         return []
-    data = json.loads(text)
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
     if isinstance(data, dict):
         data = [data]
     rows = []
@@ -85,11 +89,15 @@ def parse_pnp(text):
 
 
 def missing_drivers():
+    """Never fails: a driver query that cannot run must not take the port list down with it."""
     if os.name != "nt":
         return []
-    p = subprocess.run(["powershell", "-NoProfile", "-Command", PNP_QUERY],
-                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                       text=True, errors="replace", timeout=30)
+    try:
+        p = subprocess.run(["powershell", "-NoProfile", "-Command", PNP_QUERY],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           text=True, errors="replace", timeout=PNP_TIMEOUT_S)
+    except (subprocess.TimeoutExpired, OSError):
+        return []
     return parse_pnp(p.stdout)
 
 
@@ -120,15 +128,15 @@ def _field(text, pattern):
 
 
 def parse_flash_id(text):
-    """esptool `flash-id` output -> chip and flash facts; fields not found are None."""
-    chip_line = _field(text, r"^Chip type:\s*(.+)$") or ""
+    """esptool `flash-id` output (v5, or v4 `Chip is` style) -> chip and flash facts; fields not found are None."""
+    chip_line = _field(text, r"^(?:Chip type:|Chip is)\s*(.+)$") or ""
     m = re.match(r"(\S+)(?:\s+\(([^)]+)\))?(?:\s+\(revision\s+([^)]+)\))?", chip_line)
     features_line = _field(text, r"^Features:\s*(.+)$")
     features = [f.strip() for f in features_line.split(",")] if features_line else []
     joined = ", ".join(features)
     cpu = re.search(r"\b(\d+)MHz\b", joined)
     psram = re.search(r"PSRAM\s+(\d+MB)", joined)
-    crystal = _field(text, r"^Crystal frequency:\s*(\d+)MHz")
+    crystal = _field(text, r"^Crystal (?:frequency:|is)\s*(\d+)MHz")
     flash_type = _field(text, r"^Flash type set in eFuse:\s*(\S+)")
     return {
         "chip": m.group(1) if m else None,
@@ -144,7 +152,7 @@ def parse_flash_id(text):
             "device": _field(text, r"^Device:\s*(\S+)"),
             "size": _field(text, r"^Detected flash size:\s*(\S+)"),
             "type": flash_type,
-            "voltage": _field(text, r"^Flash voltage set by eFuse:\s*(\S+)"),
+            "voltage": _field(text, r"^Flash voltage set by eFuse(?::| to)\s*(\S+)"),
         },
     }
 
@@ -172,6 +180,17 @@ def _now_iso():
     return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def probe_result(out, exit_code, port):
+    """The probe verdict. OK needs the chip, its MAC and a known flash size (design 5.4)."""
+    info = parse_flash_id(out)
+    tail = "\n".join(out.strip().splitlines()[-5:])
+    if exit_code != 0 or not info["chip"]:
+        return {"ok": False, "port": port, "reason": classify_failure(out), "detail": tail}
+    if not info["mac"] or info["flash"]["size"] in (None, "Unknown"):
+        return {"ok": False, "port": port, "reason": "incomplete", "detail": tail}
+    return dict(ok=True, port=port, **info, probed_at=_now_iso())
+
+
 def cmd_probe(a):
     port = a.port
     if not port:
@@ -180,17 +199,11 @@ def cmd_probe(a):
         p = subprocess.run([sys.executable, "-m", "esptool", "--port", port, _esptool_name("flash-id")],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            text=True, errors="replace", timeout=PROBE_TIMEOUT_S)
-        out, code = p.stdout, p.returncode
     except subprocess.TimeoutExpired:
         result = {"ok": False, "port": port, "reason": "no_response",
                   "detail": "esptool timed out after %ds" % PROBE_TIMEOUT_S}
     else:
-        info = parse_flash_id(out)
-        if code == 0 and info["chip"]:
-            result = dict(ok=True, port=port, **info, probed_at=_now_iso())
-        else:
-            tail = "\n".join(line for line in out.strip().splitlines()[-5:])
-            result = {"ok": False, "port": port, "reason": classify_failure(out), "detail": tail}
+        result = probe_result(p.stdout, p.returncode, port)
     if a.json:
         emit(result)
     elif result["ok"]:
