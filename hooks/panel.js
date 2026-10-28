@@ -90,6 +90,7 @@ export function register(on) {
   }
 
   async function readMonitors($) {
+    if (!home) return
     const now = Date.now()
     const next = {}
     for (const { port } of scan) {
@@ -200,6 +201,8 @@ export function register(on) {
     scanning = true
     try {
       if (!python && (pythonResolved || !(await resolvePython($)))) return
+      // Velloc does not pass LOCALAPPDATA to mods, so the data folder comes from the script that writes it.
+      if (!home) home = (await quietly(() => runScript($, ['home', '--json'], PORTS_TIMEOUT_MS)))?.json?.home ?? ''
       let result
       try {
         result = await runScript($, ['ports', '--json', ...(withDrivers ? ['--drivers'] : [])], PORTS_TIMEOUT_MS)
@@ -292,8 +295,6 @@ export function register(on) {
     root = $
     t = await loadTexts($)
     await quietly(() => $.command.register({ name: COMMAND, description: t('command.description'), argumentHint: '[flash <file.bin> [COMx]]' }))
-    home = (await quietly(() => $.env.get('ESP32_BRINGUP_HOME'))) ||
-      `${(await quietly(() => $.env.get('LOCALAPPDATA'))) ?? ''}\\esp32s3-bringup`
     records = (await quietly(() => $.store.get(STORE_KEY))) ?? {}
     void doScan($, true) // finding Python and asking Windows for drivers takes seconds; don't hold the session start
     $.clock.every(TICK_MS, () => {

@@ -57,6 +57,10 @@ class CliMonitorTest(unittest.TestCase):
         self.assertEqual([m["port"] for m in out["monitors"]], ["COM8"])
         self.assertEqual(mon.read_json(mon.paths("COM9")["state"])["state"], "stopped")
 
+    def test_home_command_reports_data_folder(self):
+        code, out = run_cli("home", "--json")
+        self.assertEqual((code, out["home"]), (0, self.home))
+
     def test_command_without_monitor(self):
         code, out = run_cli("monitor", "pause", "--port", "COM9", "--json")
         self.assertEqual((code, out["ok"], out["reason"]), (1, False, "not_running"))

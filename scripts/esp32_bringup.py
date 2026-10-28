@@ -551,6 +551,10 @@ def main(argv=None):
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_monitor)
 
+    p = sub.add_parser("home", help="print the data folder (monitor state, logs, flash jobs)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=lambda a: emit({"home": esp_monitor.home()}) or 0)
+
     p = sub.add_parser("reset", help="reset the board (through its monitor when one is running)")
     p.add_argument("--port", default=os.environ.get("ESP_PORT"))
     p.add_argument("--json", action="store_true")
