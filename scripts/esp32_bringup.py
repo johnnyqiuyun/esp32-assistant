@@ -205,6 +205,77 @@ def cmd_probe(a):
     return 0 if result["ok"] else 1
 
 
+# -------------------------------------------------------------------- log ---
+
+PANIC_MARKERS = ("Guru Meditation", "abort() was called", "panic")
+
+
+def summarize_boot(text):
+    """Key facts from an ESP32-S3 boot log (one baud rate, 115200)."""
+    lines = text.splitlines()
+    resets = re.findall(r"^rst:(0x[0-9a-fA-F]+ \([^)]*\)),boot:(0x[0-9a-fA-F]+ \([^)]*\))", text, re.M)
+    if re.search(r"memory test fail", text, re.I):
+        psram_ok = False
+    elif re.search(r"memory test OK", text):
+        psram_ok = True
+    else:
+        psram_ok = None
+    return {
+        "reset_reason": resets[-1][0] if resets else None,
+        "boot_mode": resets[-1][1] if resets else None,
+        "psram_ok": psram_ok,
+        "project": _field(text, r"Project name:\s*(.+)$"),
+        "idf_version": _field(text, r"ESP-IDF:\s*(\S+)"),
+        "warnings": [l for l in lines if l.startswith("W (")],
+        "errors": [l for l in lines if l.startswith("E (")],
+        "panic": any(m in text for m in PANIC_MARKERS),
+        "boots": text.count("ESP-ROM:"),
+    }
+
+
+def capture_log(port, seconds):
+    """Reset the board via RTS and read 115200 output for `seconds`."""
+    import time
+    s = serial.Serial(None, 115200, timeout=0.2)
+    s.port = port
+    s.dtr = False  # set before open, or opening the port resets the board
+    s.rts = False
+    s.open()
+    try:
+        s.rts = True
+        time.sleep(0.1)
+        s.rts = False
+        buf = b""
+        end = time.time() + seconds
+        while time.time() < end:
+            buf += s.read(4096)
+    finally:
+        s.close()
+    return buf.decode("utf-8", errors="replace")
+
+
+def cmd_log(a):
+    if not a.port:
+        sys.exit("--port is required (or set ESP_PORT)")
+    try:
+        text = capture_log(a.port, a.seconds)
+    except serial.SerialException as e:
+        if a.json:
+            emit({"ok": False, "port": a.port, "reason": classify_failure(str(e)), "detail": str(e)})
+        else:
+            print("busy" if classify_failure(str(e)) == "busy" else "error", str(e))
+        return 1
+    summary = summarize_boot(text)
+    if a.json:
+        emit({"lines": text.splitlines(), "summary": summary})
+        return 0
+    print(text)
+    print("---- summary ----")
+    for k, v in summary.items():
+        print("%-13s %s" % (k, v))
+    return 0
+
+
 # ------------------------------------------------------------------- main ---
 
 def main(argv=None):
@@ -220,6 +291,12 @@ def main(argv=None):
     p.add_argument("--port", default=os.environ.get("ESP_PORT"))
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_probe)
+
+    p = sub.add_parser("log", help="reset the board and capture its boot log (resets the board once)")
+    p.add_argument("--port", default=os.environ.get("ESP_PORT"))
+    p.add_argument("--seconds", type=float, default=6)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_log)
 
     a = ap.parse_args(argv)
     return a.fn(a)

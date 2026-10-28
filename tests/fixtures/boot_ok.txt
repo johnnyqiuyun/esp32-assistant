@@ -1,0 +1,14 @@
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+entry 0x403c8860
+I (252) esp_psram: Found 8MB PSRAM device
+I (993) esp_psram: SPI SRAM memory test OK
+I (1008) app_init: Project name:     Code
+I (1020) app_init: ELF file SHA256:  5bc9be3e6...
+I (1020) app_init: ESP-IDF:          v6.0.2
+W (1076) spi_flash: Detected size(16384k) larger than the size in the binary image header(4096k). Using the size in the binary image header.
+I (1112) main_task: Calling app_main()
+...start...
