@@ -101,6 +101,10 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(mon.parse_progress("(10 %)\n(55 %)"), 55)
         self.assertIsNone(mon.parse_progress("Connecting...."))
 
+    def test_parse_progress_esptool_5_6_real(self):
+        line = "Writing at 0x0006e338 ===========>                    39.3% 256.00kB/651.92kB [6s] "
+        self.assertEqual(mon.parse_progress(line), 39)
+
     def test_flash_size_bytes(self):
         self.assertEqual(mon.flash_size_bytes("16MB"), 16777216)
         self.assertEqual(mon.flash_size_bytes("4MB"), 4194304)
