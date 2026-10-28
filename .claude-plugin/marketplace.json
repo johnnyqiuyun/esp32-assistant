@@ -1,0 +1,14 @@
+{
+  "name": "esp32s3-bringup",
+  "owner": {
+    "name": "Johnny Zong"
+  },
+  "description": "ESP32-S3 hardware bring-up tools for Claude Code and Velloc.",
+  "plugins": [
+    {
+      "name": "esp32s3-bringup",
+      "source": "./",
+      "description": "Find a USB-connected ESP32-S3, check it read-only, read its boot log; Velloc pane with online status and chip info."
+    }
+  ]
+}
