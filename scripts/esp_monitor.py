@@ -200,6 +200,15 @@ def _is_busy(exc):
     return isinstance(exc, PermissionError) or any(m in str(exc) for m in _BUSY_MARKERS)
 
 
+def classify_failure(text):
+    """esptool output of a failed run -> 'busy' | 'no_response' | 'error'."""
+    if "could not open port" in text and any(m in text for m in _BUSY_MARKERS):
+        return "busy"
+    if "Failed to connect" in text or "No serial data received" in text:
+        return "no_response"
+    return "error"
+
+
 # --------------------------------------------------------------- monitor ---
 
 class Monitor:
@@ -369,6 +378,12 @@ class MonitorBusy(Exception):
     """The port's monitor is alive but did not release the port in time."""
 
 
+def monitor_active(port):
+    """A live monitor on `port` that holds (or is waiting to hold) the port."""
+    st = read_json(paths(port)["state"])
+    return bool(st) and st.get("state") in ("running", "waiting") and pid_alive(st.get("pid", 0))
+
+
 @contextlib.contextmanager
 def paused_monitor(port, reset_after=False):
     """Take the port from its running monitor for the block, then give it back; yields whether one was paused.
@@ -377,9 +392,7 @@ def paused_monitor(port, reset_after=False):
     the boot banner lands in the log. A monitor the user paused, or one that is
     busy or stopped, is left alone.
     """
-    st = read_json(paths(port)["state"])
-    active = bool(st) and st.get("state") in ("running", "waiting") and pid_alive(st.get("pid", 0))
-    if not active:
+    if not monitor_active(port):
         yield False
         return
     if send(port, "pause") is None:
@@ -390,3 +403,64 @@ def paused_monitor(port, reset_after=False):
         send(port, "resume")
         if reset_after:
             send(port, "reset")
+
+
+# ----------------------------------------------------------------- flash ---
+
+class FlashJob:
+    """Write a merged image at 0x0, keeping the job file current for the pane.
+
+    A running monitor is paused first and, whatever happens, resumed and asked to
+    reset the board afterwards (esptool runs with --after no-reset, so the monitor
+    sees the new firmware's boot banner). Without a monitor, `reset_board` resets it.
+    """
+
+    def __init__(self, port, file, baud, *, run_esptool, monitor_send, monitor_alive, reset_board,
+                 esptool5=True, clock=time.time):
+        self.port, self.file, self.baud = port, file, baud
+        self.run_esptool, self.monitor_send = run_esptool, monitor_send
+        self.monitor_alive, self.reset_board = monitor_alive, reset_board
+        self.esptool5, self.clock = esptool5, clock
+        self.job = {"pid": os.getpid(), "port": port, "file": file,
+                    "bytes": os.path.getsize(file) if os.path.exists(file) else None,
+                    "state": "running", "percent": 0, "startedAt": clock(), "finishedAt": None,
+                    "reason": None, "detail": None}
+
+    def _save(self, **changes):
+        self.job.update(changes)
+        write_json_atomic(job_path(self.port), self.job)
+
+    def _on_line(self, line):
+        pct = parse_progress(line)
+        if pct is not None and pct != self.job["percent"]:
+            self._save(percent=pct)
+
+    def run(self):
+        self._save()
+        had_monitor = self.monitor_alive(self.port)
+        if had_monitor and self.monitor_send(self.port, "pause") is None:
+            self._save(state="failed", reason="busy", detail="the serial monitor did not release the port",
+                       finishedAt=self.clock())
+            return self.job
+        name = (lambda s: s) if self.esptool5 else (lambda s: s.replace("-", "_"))
+        argv = ["--port", self.port, "--baud", str(self.baud), "--after", name("no-reset"),
+                name("write-flash"), "0x0", self.file]
+        try:
+            code, out = self.run_esptool(argv, self._on_line)
+            if code == 0:
+                self._save(state="done", percent=100, finishedAt=self.clock())
+            else:
+                tail = "\n".join(out.strip().splitlines()[-5:])
+                self._save(state="failed", reason=classify_failure(out), detail=tail, finishedAt=self.clock())
+        except Exception as exc:  # noqa: BLE001 - the job file must always end
+            self._save(state="failed", reason="error", detail=str(exc), finishedAt=self.clock())
+        finally:
+            if had_monitor:
+                self.monitor_send(self.port, "resume")
+                self.monitor_send(self.port, "reset")
+            else:
+                try:
+                    self.reset_board(self.port)
+                except Exception:  # noqa: BLE001 - a failed reset must not hide the result
+                    pass
+        return self.job

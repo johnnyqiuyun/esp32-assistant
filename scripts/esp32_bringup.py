@@ -160,12 +160,7 @@ def parse_flash_id(text):
     }
 
 
-def classify_failure(text):
-    if "could not open port" in text and any(s in text for s in ("PermissionError", "Access is denied", "拒绝访问")):
-        return "busy"
-    if "Failed to connect" in text or "No serial data received" in text:
-        return "no_response"
-    return "error"
+classify_failure = esp_monitor.classify_failure
 
 
 def _esptool_name(name):
@@ -434,18 +429,89 @@ def cmd_reset(a):
         emit({"ok": True, "port": a.port, "via": "monitor"})
         return 0
     try:
-        s = open_serial(a.port, 115200)
+        reset_via_serial(a.port)
     except serial.SerialException as e:
         emit({"ok": False, "port": a.port, "reason": classify_failure(str(e)), "detail": str(e)})
         return 1
+    emit({"ok": True, "port": a.port, "via": "serial"})
+    return 0
+
+
+def reset_via_serial(port):
+    import time
+    s = open_serial(port, 115200)
     try:
         s.rts = True
         time.sleep(0.1)
         s.rts = False
     finally:
         s.close()
-    emit({"ok": True, "port": a.port, "via": "serial"})
-    return 0
+
+
+# ------------------------------------------------------------------ flash ---
+
+FLASH_TIMEOUT_S = 30 * 60
+
+
+def run_esptool_streaming(argv, on_line):
+    """Run esptool, calling on_line for every line or carriage-return-separated progress update."""
+    p = subprocess.Popen([sys.executable, "-m", "esptool"] + argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    out, buf = [], b""
+    while True:
+        chunk = p.stdout.read1(256) if hasattr(p.stdout, "read1") else p.stdout.read(1)
+        if not chunk:
+            break
+        buf += chunk
+        parts = re.split(rb"[\r\n]", buf)
+        buf = parts.pop()
+        for part in parts:
+            if part:
+                text = part.decode("utf-8", errors="replace")
+                out.append(text)
+                on_line(text)
+    if buf:
+        out.append(buf.decode("utf-8", errors="replace"))
+    return p.wait(timeout=FLASH_TIMEOUT_S), "\n".join(out)
+
+
+def _esptool5():
+    try:
+        import esptool
+        return int(esptool.__version__.split(".")[0]) >= 5
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def cmd_flash(a):
+    if not a.port:
+        sys.exit("--port is required (or set ESP_PORT)")
+    path = os.path.abspath(a.file)
+    ok, why = esp_monitor.check_image(path, esp_monitor.flash_size_bytes(a.flash_size))
+    if not ok:
+        emit({"ok": False, "port": a.port, "file": path, "reason": "bad_image", "detail": why})
+        return 1
+    if not a.yes:
+        emit({"ok": False, "reason": "needs_yes", "plan": {"port": a.port, "file": path, "bytes": os.path.getsize(path)}})
+        return 2
+    job = esp_monitor.read_json(esp_monitor.job_path(a.port))
+    if job and job.get("state") == "running" and esp_monitor.pid_alive(job.get("pid", 0)):
+        emit({"ok": False, "port": a.port, "reason": "already_flashing"})
+        return 1
+    if not a.wait:
+        spawn_detached(["flash", "--port", a.port, path, "--baud", str(a.baud), "--yes", "--wait", "--json"])
+        emit({"ok": True, "started": True, "job": esp_monitor.job_path(a.port)})
+        return 0
+
+    def on_line(line):
+        if not a.json:
+            print(line, flush=True)
+
+    flasher = esp_monitor.FlashJob(a.port, path, a.baud, run_esptool=lambda argv, cb: run_esptool_streaming(
+        argv, lambda line: (cb(line), on_line(line))), monitor_send=esp_monitor.send,
+        monitor_alive=esp_monitor.monitor_active, reset_board=reset_via_serial, esptool5=_esptool5())
+    result = flasher.run()
+    emit({"ok": result["state"] == "done", **result})
+    return 0 if result["state"] == "done" else 1
 
 
 # ------------------------------------------------------------------- main ---
@@ -484,6 +550,16 @@ def main(argv=None):
     p.add_argument("--port", default=os.environ.get("ESP_PORT"))
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_reset)
+
+    p = sub.add_parser("flash", help="WRITE a merged .bin at 0x0 (needs --yes; the only command that writes flash)")
+    p.add_argument("file")
+    p.add_argument("--port", default=os.environ.get("ESP_PORT"))
+    p.add_argument("--baud", type=int, default=esp_monitor.FLASH_BAUD)
+    p.add_argument("--flash-size", help="the board's flash size, e.g. 16MB, to refuse a larger image")
+    p.add_argument("--yes", action="store_true", help="really write; without it only the plan is printed")
+    p.add_argument("--wait", action="store_true", help="flash in this process and print progress")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_flash)
 
     a = ap.parse_args(argv)
     return a.fn(a)
