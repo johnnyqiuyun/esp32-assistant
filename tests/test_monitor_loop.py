@@ -216,6 +216,34 @@ class MonitorLoopTest(unittest.TestCase):
         finally:
             mon.LOG_ROTATE_BYTES, mon.LOG_KEEP_FILES = saved
 
+    def test_ignores_stale_control_on_start(self):
+        self.command("stop", 99)
+        m = self.make()
+        self.assertTrue(m.step())
+        self.assertEqual(self.state()["state"], "running")
+
+    def test_tail_in_state(self):
+        saved = mon.TAIL_LINES
+        try:
+            mon.TAIL_LINES = 3
+            self.next_serial = FakeSerial([b"a\nb\nc\nd\ne\n"])
+            m = self.make()
+            m.step()
+            m.step()
+            tail = self.state()["tail"]
+            self.assertEqual([(x["i"], mon.strip_stamp(x["text"])) for x in tail], [(2, "c"), (3, "d"), (4, "e")])
+        finally:
+            mon.TAIL_LINES = saved
+
+    def test_no_heartbeat_mode_ignores_stale_heartbeat(self):
+        m = mon.Monitor(PORT, 115200, "KEY", open_serial=self.open_serial, port_present=lambda port: True,
+                        clock=self.clock, sleep=lambda s: None, heartbeat=False)
+        m.step()
+        old = self.clock.t - (mon.HEARTBEAT_TIMEOUT_S + 100)
+        os.utime(mon.paths(PORT)["hb"], (old, old))
+        self.assertTrue(m.step())
+        self.assertEqual(self.state()["state"], "running")
+
     def test_send_times_out_when_no_monitor(self):
         self.assertIsNone(mon.send(PORT, "pause", timeout=0.3))
 

@@ -5,6 +5,8 @@ every line to a log file and keeps a JSON state file the Velloc pane polls.
 Other commands talk to it through a control file (pause / resume / reset /
 retry / stop) and wait for its acknowledgement.
 """
+import collections
+import contextlib
 import json
 import os
 import re
@@ -134,6 +136,10 @@ def paths(port):
     return {k: os.path.join(base, port + ext) for k, ext in (("state", ".json"), ("ctl", ".ctl"), ("hb", ".hb"))}
 
 
+def job_path(port):
+    return os.path.join(home(), "jobs", port + ".flash.json")
+
+
 def log_dir(key):
     return os.path.join(home(), "logs", key)
 
@@ -204,16 +210,19 @@ class Monitor:
     until `retry` or an unplug and replug); stopped.
     """
 
-    def __init__(self, port, baud, key, *, open_serial, port_present, clock=time.time, sleep=time.sleep):
+    def __init__(self, port, baud, key, *, open_serial, port_present, clock=time.time, sleep=time.sleep,
+                 heartbeat=True):
         self.port, self.baud, self.key = port, baud, key
         self.open_serial, self.port_present = open_serial, port_present
         self.clock, self.sleep = clock, sleep
+        self.heartbeat = heartbeat  # False when Velloc owns the process and ends it with the session
+        self.tail = collections.deque(maxlen=TAIL_LINES)
         self.p = paths(port)
         self.ser = None
         self.state = "starting"
         self.reason = None
         self.ack = None
-        self.handled = None
+        self.handled = (read_json(self.p["ctl"]) or {}).get("id")  # a command left by an earlier run is not ours
         self.lines = 0
         self.partial = b""
         self.summary = LiveSummary()
@@ -251,6 +260,7 @@ class Monitor:
             for text in texts:
                 line = stamp + text
                 f.write(line + "\n")
+                self.tail.append({"i": self.lines, "text": line})
                 self.summary.feed(line, now)
                 self.lines += 1
         if os.path.getsize(self.log_path) >= LOG_ROTATE_BYTES:
@@ -324,13 +334,13 @@ class Monitor:
             "pid": os.getpid(), "port": self.port, "baud": self.baud, "key": self.key,
             "state": self.state, "reason": self.reason, "log": self.log_path,
             "startedAt": self.started_at, "updatedAt": self.clock(), "ack": self.ack,
-            "lines": self.lines, "summary": self.summary.to_dict(),
+            "lines": self.lines, "tail": list(self.tail), "summary": self.summary.to_dict(),
         })
 
     def step(self):
         """One round of control, I/O and bookkeeping. False means the monitor should exit."""
         alive = self._control()
-        if alive and not self._heartbeat_ok():
+        if alive and self.heartbeat and not self._heartbeat_ok():
             self._close()
             self.state, self.reason, alive = "stopped", "no_heartbeat", False
         if alive:
@@ -353,3 +363,30 @@ class Monitor:
         while self.step():
             if self.state != "running":
                 self.sleep(CTL_POLL_S)
+
+
+class MonitorBusy(Exception):
+    """The port's monitor is alive but did not release the port in time."""
+
+
+@contextlib.contextmanager
+def paused_monitor(port, reset_after=False):
+    """Take the port from its running monitor for the block, then give it back; yields whether one was paused.
+
+    With `reset_after`, the monitor resets the board once it has the port again, so
+    the boot banner lands in the log. A monitor the user paused, or one that is
+    busy or stopped, is left alone.
+    """
+    st = read_json(paths(port)["state"])
+    active = bool(st) and st.get("state") in ("running", "waiting") and pid_alive(st.get("pid", 0))
+    if not active:
+        yield False
+        return
+    if send(port, "pause") is None:
+        raise MonitorBusy(port)
+    try:
+        yield True
+    finally:
+        send(port, "resume")
+        if reset_after:
+            send(port, "reset")

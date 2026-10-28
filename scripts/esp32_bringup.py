@@ -20,6 +20,9 @@ try:
 except ImportError:
     sys.exit("pyserial is missing. Install with:\n  %s -m pip install --user pyserial esptool" % sys.executable)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import esp_monitor  # noqa: E402
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(errors="replace")
     sys.stderr.reconfigure(errors="replace")
@@ -191,19 +194,28 @@ def probe_result(out, exit_code, port):
     return dict(ok=True, port=port, **info, probed_at=_now_iso())
 
 
+def run_probe(port, reset=True):
+    """esptool flash-id; with reset=False the board stays in the bootloader for the monitor to reset."""
+    after = [] if reset else ["--after", _esptool_name("no-reset")]
+    try:
+        p = subprocess.run([sys.executable, "-m", "esptool", "--port", port] + after + [_esptool_name("flash-id")],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           text=True, errors="replace", timeout=PROBE_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "port": port, "reason": "no_response",
+                "detail": "esptool timed out after %ds" % PROBE_TIMEOUT_S}
+    return probe_result(p.stdout, p.returncode, port)
+
+
 def cmd_probe(a):
     port = a.port
     if not port:
         sys.exit("--port is required (or set ESP_PORT)")
     try:
-        p = subprocess.run([sys.executable, "-m", "esptool", "--port", port, _esptool_name("flash-id")],
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                           text=True, errors="replace", timeout=PROBE_TIMEOUT_S)
-    except subprocess.TimeoutExpired:
-        result = {"ok": False, "port": port, "reason": "no_response",
-                  "detail": "esptool timed out after %ds" % PROBE_TIMEOUT_S}
-    else:
-        result = probe_result(p.stdout, p.returncode, port)
+        with esp_monitor.paused_monitor(port, reset_after=True) as monitored:
+            result = run_probe(port, reset=not monitored)
+    except esp_monitor.MonitorBusy:
+        result = {"ok": False, "port": port, "reason": "busy", "detail": "the serial monitor did not release the port"}
     if a.json:
         emit(result)
     elif result["ok"]:
@@ -267,11 +279,32 @@ def capture_log(port, seconds):
     return buf.decode("utf-8", errors="replace")
 
 
+def log_via_monitor(port, seconds):
+    """With a monitor running, ask it to reset the board and read what it logs; None if it did not answer."""
+    import time
+    st = esp_monitor.read_json(esp_monitor.paths(port)["state"]) or {}
+    log = st.get("log")
+    start = os.path.getsize(log) if log and os.path.exists(log) else 0
+    if esp_monitor.send(port, "reset") is None:
+        return None
+    time.sleep(seconds)
+    with open(log, encoding="utf-8", errors="replace") as f:
+        f.seek(start)
+        return "\n".join(esp_monitor.strip_stamp(line) for line in f.read().splitlines())
+
+
+def _monitor_running(port):
+    st = esp_monitor.read_json(esp_monitor.paths(port)["state"])
+    return bool(st) and st.get("state") == "running" and esp_monitor.pid_alive(st.get("pid", 0))
+
+
 def cmd_log(a):
     if not a.port:
         sys.exit("--port is required (or set ESP_PORT)")
     try:
-        text = capture_log(a.port, a.seconds)
+        text = log_via_monitor(a.port, a.seconds) if _monitor_running(a.port) else None
+        if text is None:
+            text = capture_log(a.port, a.seconds)
     except serial.SerialException as e:
         if a.json:
             emit({"ok": False, "port": a.port, "reason": classify_failure(str(e)), "detail": str(e)})
@@ -286,6 +319,132 @@ def cmd_log(a):
     print("---- summary ----")
     for k, v in summary.items():
         print("%-13s %s" % (k, v))
+    return 0
+
+
+# ---------------------------------------------------------------- monitor ---
+
+DETACH_FLAGS = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+MONITOR_COMMANDS = ("stop", "pause", "resume", "reset", "retry")
+
+
+def open_serial(port, baud):
+    s = serial.Serial(None, baud, timeout=0.2)
+    s.port = port
+    s.dtr = False  # set before open, or opening the port resets the board
+    s.rts = False
+    s.open()
+    return s
+
+
+def port_present(port):
+    return any(p.device == port for p in list_ports.comports())
+
+
+def spawn_detached(args):
+    """Start this script with `args` outside the caller's console and, where allowed, outside its job."""
+    exe = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    exe = exe if os.path.exists(exe) else sys.executable
+    kw = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+    argv = [exe, os.path.abspath(__file__)] + args
+    try:
+        return subprocess.Popen(argv, creationflags=DETACH_FLAGS | subprocess.CREATE_BREAKAWAY_FROM_JOB, **kw)
+    except OSError:  # the caller's job forbids breakaway (Velloc does); start inside it
+        return subprocess.Popen(argv, creationflags=DETACH_FLAGS, **kw)
+
+
+def tail_lines(path, n):
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        lines = f.read().splitlines()
+    first = max(0, len(lines) - n)
+    return [{"i": first + k, "text": text} for k, text in enumerate(lines[first:])]
+
+
+def _monitor_state(port):
+    st = esp_monitor.read_json(esp_monitor.paths(port)["state"])
+    alive = bool(st) and esp_monitor.pid_alive(st.get("pid", 0))
+    return st, alive
+
+
+def cmd_monitor(a):
+    import time
+    act = a.action
+    if act == "list":
+        found = []
+        base = os.path.join(esp_monitor.home(), "monitors")
+        for name in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(base, name)
+            st = esp_monitor.read_json(path)
+            if not st:
+                continue
+            if esp_monitor.pid_alive(st.get("pid", 0)):
+                found.append(st)
+            elif st.get("state") != "stopped":
+                st.update(state="stopped", reason="process_gone")
+                esp_monitor.write_json_atomic(path, st)
+        emit({"monitors": found})
+        return 0
+    if not a.port:
+        sys.exit("--port is required (or set ESP_PORT)")
+    port = a.port
+    if act == "run":
+        esp_monitor.Monitor(port, a.baud, a.key or port, open_serial=open_serial, port_present=port_present,
+                            heartbeat=not a.no_heartbeat).run()
+        return 0
+    if act == "status":
+        esp_monitor.touch_heartbeat(port)
+        st, alive = _monitor_state(port)
+        flash = esp_monitor.read_json(esp_monitor.job_path(port))
+        emit({"monitor": st, "alive": alive, "lines": tail_lines(st and st.get("log"), a.lines), "flash": flash})
+        return 0
+    if act == "start":
+        st, alive = _monitor_state(port)
+        if not (alive and st.get("state") != "stopped"):
+            esp_monitor.touch_heartbeat(port)
+            child = spawn_detached(["monitor", "run", "--port", port, "--baud", str(a.baud), "--key", a.key or port])
+            end = time.time() + 3
+            while time.time() < end:
+                st = esp_monitor.read_json(esp_monitor.paths(port)["state"])
+                if st and st.get("pid") == child.pid:
+                    break
+                time.sleep(0.1)
+            alive = bool(st) and st.get("pid") == child.pid
+        emit({"ok": alive, "port": port, "pid": st and st.get("pid"), "state": st and st.get("state"),
+              "log": st and st.get("log")})
+        return 0 if alive else 1
+    st, alive = _monitor_state(port)
+    if not alive:
+        emit({"ok": False, "port": port, "reason": "not_running"})
+        return 1
+    result = esp_monitor.send(port, act)
+    emit({"ok": result is not None, "port": port, "state": result and result.get("state"),
+          **({} if result is not None else {"reason": "no_ack"})})
+    return 0 if result is not None else 1
+
+
+def cmd_reset(a):
+    import time
+    if not a.port:
+        sys.exit("--port is required (or set ESP_PORT)")
+    if _monitor_running(a.port) and esp_monitor.send(a.port, "reset") is not None:
+        emit({"ok": True, "port": a.port, "via": "monitor"})
+        return 0
+    try:
+        s = open_serial(a.port, 115200)
+    except serial.SerialException as e:
+        emit({"ok": False, "port": a.port, "reason": classify_failure(str(e)), "detail": str(e)})
+        return 1
+    try:
+        s.rts = True
+        time.sleep(0.1)
+        s.rts = False
+    finally:
+        s.close()
+    emit({"ok": True, "port": a.port, "via": "serial"})
     return 0
 
 
@@ -310,6 +469,21 @@ def main(argv=None):
     p.add_argument("--seconds", type=float, default=6)
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_log)
+
+    p = sub.add_parser("monitor", help="background serial monitor: start|run|status|list|stop|pause|resume|reset|retry")
+    p.add_argument("action", choices=("start", "run", "status", "list") + MONITOR_COMMANDS)
+    p.add_argument("--port", default=os.environ.get("ESP_PORT"))
+    p.add_argument("--baud", type=int, default=115200)
+    p.add_argument("--key", help="log folder name (default: the port)")
+    p.add_argument("--lines", type=int, default=esp_monitor.TAIL_LINES)
+    p.add_argument("--no-heartbeat", action="store_true", help="run: never exit for a missing heartbeat")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_monitor)
+
+    p = sub.add_parser("reset", help="reset the board (through its monitor when one is running)")
+    p.add_argument("--port", default=os.environ.get("ESP_PORT"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_reset)
 
     a = ap.parse_args(argv)
     return a.fn(a)
