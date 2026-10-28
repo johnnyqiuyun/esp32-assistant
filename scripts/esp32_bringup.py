@@ -109,6 +109,102 @@ def cmd_ports(a):
     return 0
 
 
+# ------------------------------------------------------------------ probe ---
+
+PROBE_TIMEOUT_S = 30
+
+
+def _field(text, pattern):
+    m = re.search(pattern, text, re.M)
+    return m.group(1).strip() if m else None
+
+
+def parse_flash_id(text):
+    """esptool `flash-id` output -> chip and flash facts; fields not found are None."""
+    chip_line = _field(text, r"^Chip type:\s*(.+)$") or ""
+    m = re.match(r"(\S+)(?:\s+\(([^)]+)\))?(?:\s+\(revision\s+([^)]+)\))?", chip_line)
+    features_line = _field(text, r"^Features:\s*(.+)$")
+    features = [f.strip() for f in features_line.split(",")] if features_line else []
+    joined = ", ".join(features)
+    cpu = re.search(r"\b(\d+)MHz\b", joined)
+    psram = re.search(r"PSRAM\s+(\d+MB)", joined)
+    crystal = _field(text, r"^Crystal frequency:\s*(\d+)MHz")
+    flash_type = _field(text, r"^Flash type set in eFuse:\s*(\S+)")
+    return {
+        "chip": m.group(1) if m else None,
+        "package": m.group(2) if m else None,
+        "revision": m.group(3) if m else None,
+        "features": features,
+        "cpu_mhz": int(cpu.group(1)) if cpu else None,
+        "psram": psram.group(1) if psram else None,
+        "crystal_mhz": int(crystal) if crystal else None,
+        "mac": _field(text, r"^MAC:\s*([0-9a-fA-F:]{17})"),
+        "flash": {
+            "manufacturer": _field(text, r"^Manufacturer:\s*(\S+)"),
+            "device": _field(text, r"^Device:\s*(\S+)"),
+            "size": _field(text, r"^Detected flash size:\s*(\S+)"),
+            "type": flash_type,
+            "voltage": _field(text, r"^Flash voltage set by eFuse:\s*(\S+)"),
+        },
+    }
+
+
+def classify_failure(text):
+    if "could not open port" in text and any(s in text for s in ("PermissionError", "Access is denied", "拒绝访问")):
+        return "busy"
+    if "Failed to connect" in text or "No serial data received" in text:
+        return "no_response"
+    return "error"
+
+
+def _esptool_name(name):
+    """esptool >= 5 uses dashed command names, older versions underscores."""
+    try:
+        import esptool
+        major = int(esptool.__version__.split(".")[0])
+    except Exception:
+        major = 5
+    return name if major >= 5 else name.replace("-", "_")
+
+
+def _now_iso():
+    import datetime
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def cmd_probe(a):
+    port = a.port
+    if not port:
+        sys.exit("--port is required (or set ESP_PORT)")
+    try:
+        p = subprocess.run([sys.executable, "-m", "esptool", "--port", port, _esptool_name("flash-id")],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           text=True, errors="replace", timeout=PROBE_TIMEOUT_S)
+        out, code = p.stdout, p.returncode
+    except subprocess.TimeoutExpired:
+        result = {"ok": False, "port": port, "reason": "no_response",
+                  "detail": "esptool timed out after %ds" % PROBE_TIMEOUT_S}
+    else:
+        info = parse_flash_id(out)
+        if code == 0 and info["chip"]:
+            result = dict(ok=True, port=port, **info, probed_at=_now_iso())
+        else:
+            tail = "\n".join(line for line in out.strip().splitlines()[-5:])
+            result = {"ok": False, "port": port, "reason": classify_failure(out), "detail": tail}
+    if a.json:
+        emit(result)
+    elif result["ok"]:
+        f = result["flash"]
+        print("Chip:    %s (%s) rev %s, %s MHz" % (result["chip"], result["package"], result["revision"], result["cpu_mhz"]))
+        print("Flash:   %s %s %s (mfr %s dev %s)" % (f["size"], f["type"], f["voltage"], f["manufacturer"], f["device"]))
+        print("PSRAM:   %s" % (result["psram"] or "none"))
+        print("Crystal: %s MHz" % result["crystal_mhz"])
+        print("MAC:     %s" % result["mac"])
+    else:
+        print("Probe failed on %s: %s\n%s" % (port, result["reason"], result["detail"]))
+    return 0 if result["ok"] else 1
+
+
 # ------------------------------------------------------------------- main ---
 
 def main(argv=None):
@@ -119,6 +215,11 @@ def main(argv=None):
     p.add_argument("--drivers", action="store_true", help="also report devices with a missing driver (Windows)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_ports)
+
+    p = sub.add_parser("probe", help="read chip, MAC and flash via the ROM bootloader (resets the board once)")
+    p.add_argument("--port", default=os.environ.get("ESP_PORT"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_probe)
 
     a = ap.parse_args(argv)
     return a.fn(a)
