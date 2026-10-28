@@ -17,3 +17,27 @@ Throwaway mod `esp32-spike` (removed after this note).
 - `$.process.run`: not directly observed in Velloc (same reason). panel.js was smoke-tested with a
   fake `$` whose `process.run` spawns the real Python; final acceptance in Velloc verifies it.
 - `$.store` persists as JSON at `%USERPROFILE%\.velloc\mods\<plugin>\store.json`.
+
+# Spike notes, phase 2 (plan Task 1), 2026-10-28
+
+Throwaway mod `esp32-spike2` (removed after this note).
+
+- DETACH_FLAGS = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW (+ CREATE_BREAKAWAY_FROM_JOB, falling back without it)
+  Inside Velloc, CREATE_BREAKAWAY_FROM_JOB is refused (WinError 5): Velloc runs `$.process.run` children in a job
+  object that does not allow breakaway.
+- DETACHED_SURVIVES_RUN = false
+  The "detached" grandchild never wrote its file: it is killed together with the job when `$.process.run` returns.
+  The same launcher run from a normal terminal works (child kept running), so this is Velloc's containment.
+- TIMEOUT_KILLS_CHILD = true  ("$.process.run: the command did not finish within 3000ms; it was stopped").
+- LONG_RUN_WORKS = true
+  `$.process.run([py, sleeper.py], { timeoutMs: 86400000 })` without awaiting keeps the child running
+  (observed ~100 s of continuous updates), and other `$.process.run` calls work meanwhile (print(42) in 184 ms).
+- LONG_RUN_KILLED_ON_VELLOC_EXIT = true
+  The child stopped updating at 15:57:05 and its process was gone; Velloc was not running at 15:57:12.
+  (Observed once, timed by the user quitting Velloc.)
+- FS_READ_OUTSIDE_PLUGIN = true  (`$.fs.read` of %LOCALAPPDATA%\esp32s3-bringup\spike\sleeper.json returned its content).
+- LINK_OPENS_FOLDER = false  (user: the Link did not open a folder).
+- INPUT_WORKS = false  (user: no input box was shown in the pane).
+
+Decision (user chose option A): in Velloc the monitor and the flash job run as long, un-awaited
+`$.process.run` calls that live as long as the Velloc session; no detaching from Velloc's job object.
