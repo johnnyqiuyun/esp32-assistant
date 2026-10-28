@@ -4,6 +4,8 @@
  * `ui` is `{ Box, Text, Button }` from `$.ui.resolve(e)`.
  */
 
+import { monitorTree } from './monitor-view.js'
+
 const STATE_COLOR = { known: 'green', probing: 'yellow', failed: 'red' }
 
 function localTime(iso) {
@@ -50,7 +52,14 @@ function boardTree(ui, b, t, actions) {
 export function paneTree(ui, view, t, actions) {
   const { Box, Text, Button } = ui
   const caption = (value, props = {}) => Text({ size: 'caption', wrap: 'wrap', ...props, children: [value] })
-  const children = view.boards.map(b => boardTree(ui, b, t, actions))
+  const children = view.boards.map(b => {
+    const card = boardTree(ui, b, t, actions)
+    if (!view.monitors) return card
+    const opts = { clearAt: view.clearAt?.[b.port] ?? 0, draft: view.flashDraft?.[b.port] ?? null,
+      linkOpensFolder: !!view.linkOpensFolder, logDir: view.logDir ?? '', now: view.now ?? Date.now() }
+    return Box({ key: `card:${b.port}`, flexDirection: 'column', gap: 1,
+      children: [card, monitorTree(ui, b, view.monitors[b.port], t, actions, opts)] })
+  })
   for (const m of view.missingDriver ?? []) {
     children.push(Box({ key: `driver:${m.vid}:${m.pid}:${m.name}`, flexDirection: 'column', children: [
       caption(t('driver.missing', { name: m.name, code: m.error_code }), { color: 'red' }),
