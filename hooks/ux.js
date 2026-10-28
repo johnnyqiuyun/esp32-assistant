@@ -77,6 +77,10 @@ export function health(board, monitor, nowMs) {
     if (uptime !== null && uptime < JUST_REBOOTED_S && kind && kind !== 'poweron') {
       return { tone: 'warn', key: 'health.rebooted', vars: { kind } }
     }
+    if (uptime === null && monitor.startedAt) {
+      // The board booted before monitoring began, so only the watch time is known.
+      return { tone: 'ok', key: 'health.watching', vars: { watched: Math.max(0, Math.floor(nowMs / 1000 - monitor.startedAt)) } }
+    }
     return { tone: 'ok', key: 'health.running', vars: { seconds: uptime } }
   }
   if (board.state === 'unprobed') return { tone: 'idle', key: 'health.unprobed' }

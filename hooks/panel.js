@@ -63,6 +63,10 @@ export function register(on) {
   let stoppedPorts = []
   const clearAt = {}
   const flashDraft = {}
+  const expanded = {} // port -> details shown
+  const logFilter = {} // port -> 'all' | 'problems' | 'wifi'
+  const logMore = {} // port -> show 200 lines instead of 30
+  const flashDismissed = {} // port -> startedAt of the flash result the person closed
   const ref = $ => ({ plugin: $.plugin.name, key: 'view' })
   const script = $ => `${$.plugin.root}/scripts/esp32_bringup.py`
 
@@ -82,6 +86,10 @@ export function register(on) {
       logDir: `${home}\\logs`,
       linkOpensFolder: false, // spike 2: a Link cannot open a local folder
       now: Date.now(),
+      expanded,
+      logFilter,
+      logMore,
+      flashDismissed,
     }
   }
 
@@ -137,7 +145,7 @@ export function register(on) {
     const size = flashSizeOf(port)
     const result = await quietly(() => runScript($, ['flash', '--port', port, path, '--json', ...(size ? ['--flash-size', size] : [])], CONTROL_TIMEOUT_MS))
     const out = result?.json
-    if (out?.reason === 'needs_yes') flashDraft[port] = { path: out.plan.file, confirming: true }
+    if (out?.reason === 'needs_yes') flashDraft[port] = { path: out.plan.file, bytes: out.plan.bytes, confirming: true }
     else flashDraft[port] = { path, confirming: false, error: out?.detail ?? out?.reason ?? 'error' }
   }
 
@@ -283,6 +291,23 @@ export function register(on) {
     },
     flashConfirm: port => {
       confirmFlash(port)
+      void quietly(() => publish(root))
+    },
+    toggleDetails: port => {
+      expanded[port] = !expanded[port]
+      void quietly(() => publish(root))
+    },
+    setLogFilter: (port, filter) => {
+      logFilter[port] = filter
+      void quietly(() => publish(root))
+    },
+    toggleLogMore: port => {
+      logMore[port] = !logMore[port]
+      void quietly(() => publish(root))
+    },
+    flashDismiss: port => {
+      flashDismissed[port] = monitors[port]?.flash?.startedAt ?? null
+      delete flashDraft[port]
       void quietly(() => publish(root))
     },
     flashCancel: port => {

@@ -1,12 +1,14 @@
 /**
- * The ESP32 pane and status line, as pure functions of the view:
- * `{ boards: Board[], missingDriver: object[] | null, python: { state, detail? }, polling: 'background' | 'pane' }`.
- * `ui` is `{ Box, Text, Button }` from `$.ui.resolve(e)`.
+ * The ESP32 pane and status line, as pure functions of the view (design: docs/design-ux.md):
+ * `{ boards, missingDriver, python, polling, monitors?, clearAt?, flashDraft?, logDir?, linkOpensFolder?, now?,
+ *    expanded?, logFilter?, logMore?, flashDismissed? }`.
+ * `ui` is `{ Box, Text, Button, Link }` from `$.ui.resolve(e)`.
  */
 
 import { monitorTree } from './monitor-view.js'
+import { formatDuration, health, overview } from './ux.js'
 
-const STATE_COLOR = { known: 'green', probing: 'yellow', failed: 'red' }
+const TONE_COLOR = { ok: 'green', warn: 'yellow', error: 'red' }
 
 function localTime(iso) {
   const d = new Date(iso)
@@ -15,67 +17,104 @@ function localTime(iso) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-function boardTree(ui, b, t, actions) {
+/** The monitor state that counts as running (a stopped one is shown as none). */
+function liveMonitor(mon) {
+  return mon?.monitor && mon.monitor.state !== 'stopped' ? mon.monitor : null
+}
+
+function healthText(h, t) {
+  if (h.key === 'health.probeFailed') return t(h.key, { reason: t(`fail.${h.vars.reason}`) })
+  if (h.key === 'health.rebooted') return t(h.key, { reason: t(`reset.${h.vars.kind}`) })
+  if (h.key === 'health.running') {
+    return h.vars.seconds === null ? t('health.runningShort') : t(h.key, { time: formatDuration(h.vars.seconds, t) })
+  }
+  if (h.key === 'health.watching') return t(h.key, { time: formatDuration(h.vars.watched, t) })
+  return t(h.key)
+}
+
+function boardHead(ui, b, h, expanded, t, actions) {
   const { Box, Text, Button } = ui
   const caption = (value, props = {}) => Text({ size: 'caption', wrap: 'wrap', ...props, children: [value] })
-  const name = b.info?.chip ?? t(`bridge.${b.bridge}`)
+  const color = TONE_COLOR[h.tone]
   const children = [
-    Text({ weight: 'semibold', size: 'body', color: STATE_COLOR[b.state], wrap: 'wrap',
-      children: [`${name} · ${b.port} · ● ${t(`state.${b.state}`)}`] }),
+    Text({ weight: 'semibold', size: 'body', color, wrap: 'wrap', children: [`● ${b.info?.chip ?? t(`bridge.${b.bridge}`)} · ${b.port}`] }),
+    Text({ size: 'body', color, wrap: 'wrap', children: [healthText(h, t)] }),
   ]
-  if (b.state === 'failed') {
-    children.push(caption(t(`fail.${b.reason}`), { color: 'red' }))
-    if (b.detail) children.push(caption(b.detail, { dimColor: true }))
-  }
+  if (b.state === 'failed' && b.detail) children.push(caption(b.detail, { dimColor: true }))
   const i = b.info
-  if (i && (b.state === 'known' || b.state === 'failed')) {
-    children.push(
-      caption(t('field.chip', { chip: i.chip, package: i.package ?? '—', revision: i.revision ?? '—' })),
-      caption(t('field.cpu', { mhz: i.cpu_mhz ?? '—' })),
-      caption(t('field.flash', { size: i.flash?.size ?? '—', type: i.flash?.type ?? '—', voltage: i.flash?.voltage ?? '—' })),
-      caption(t('field.psram', { psram: i.psram ?? t('psram.none') })),
-      caption(t('field.crystal', { mhz: i.crystal_mhz ?? '—' })),
-      caption(t('field.mac', { mac: i.mac ?? '—' }), { mono: true }),
-      caption(t('field.probedAt', { time: localTime(b.probedAt) }), { dimColor: true }),
-    )
+  if (i) {
+    children.push(Box({ flexDirection: 'row', gap: 1, alignItems: 'center', children: [
+      caption(t('spec.line', { flash: i.flash?.size ?? '—', psram: i.psram ?? t('psram.none'), mhz: i.cpu_mhz ?? '—', revision: i.revision ?? '—' })),
+      Button({ key: `details:${b.port}`, label: t(expanded ? 'btn.hideDetails' : 'btn.details'), variant: 'secondary',
+        onPress: () => actions.toggleDetails(b.port) }),
+    ] }))
+    if (expanded) {
+      children.push(
+        caption(t('field.chip', { chip: i.chip, package: i.package ?? '—', revision: i.revision ?? '—' }), { dimColor: true }),
+        caption(t('field.crystal', { mhz: i.crystal_mhz ?? '—' }), { dimColor: true }),
+        caption(t('field.flash', { size: i.flash?.size ?? '—', type: i.flash?.type ?? '—', voltage: i.flash?.voltage ?? '—' }), { dimColor: true }),
+        caption(t('field.mac', { mac: i.mac ?? '—' }), { mono: true, dimColor: true }),
+        caption(t('field.probedAt', { time: localTime(b.probedAt) }), { dimColor: true }),
+      )
+    }
   }
   if (b.state !== 'probing') {
-    children.push(
-      Button({ key: `probe:${b.port}`, label: t(b.state === 'unprobed' ? 'btn.probe' : 'btn.reprobe'),
-        variant: b.state === 'unprobed' ? 'primary' : 'secondary', onPress: () => actions.probe(b.port) }),
+    const first = b.state === 'unprobed'
+    children.push(Box({ flexDirection: 'row', gap: 1, alignItems: 'center', children: [
+      Button({ key: `probe:${b.port}`, label: t(first ? 'btn.probe' : 'btn.reprobe'), variant: first ? 'primary' : 'secondary',
+        onPress: () => actions.probe(b.port) }),
       caption(t('probe.resetsBoard'), { dimColor: true }),
-    )
+    ] }))
   }
-  return Box({ key: `board:${b.port}`, flexDirection: 'column', children })
+  return children
 }
 
 export function paneTree(ui, view, t, actions) {
   const { Box, Text, Button } = ui
   const caption = (value, props = {}) => Text({ size: 'caption', wrap: 'wrap', ...props, children: [value] })
-  const children = view.boards.map(b => {
-    const card = boardTree(ui, b, t, actions)
-    if (!view.monitors) return card
-    const mon = view.monitors[b.port]
-    const cleared = view.clearAt?.[b.port]
-    // Line numbers restart with every monitor process, so a Clear applies only to the run it was made in.
-    const clearAt = cleared && cleared.startedAt === mon?.monitor?.startedAt ? cleared.at : 0
-    const opts = { clearAt, draft: view.flashDraft?.[b.port] ?? null,
-      linkOpensFolder: !!view.linkOpensFolder, logDir: view.logDir ?? '', now: view.now ?? Date.now() }
-    return Box({ key: `card:${b.port}`, flexDirection: 'column', gap: 1,
-      children: [card, monitorTree(ui, b, mon, t, actions, opts)] })
+  const now = view.now ?? Date.now()
+  const healths = view.boards.map(b => health(b, liveMonitor(view.monitors?.[b.port]), now))
+  const head = overview(view.boards, healths, view.missingDriver, view.python)
+  const children = [
+    Text({ weight: 'semibold', size: 'body', children: [t('pane.heading')] }),
+    Text({ size: 'body', color: TONE_COLOR[head.tone], wrap: 'wrap', children: [t(head.key, head.vars)] }),
+  ]
+  view.boards.forEach((b, n) => {
+    const card = boardHead(ui, b, healths[n], !!view.expanded?.[b.port], t, actions)
+    if (view.monitors) {
+      const mon = view.monitors[b.port]
+      const cleared = view.clearAt?.[b.port]
+      // Line numbers restart with every monitor process, so a Clear applies only to the run it was made in.
+      const clearAt = cleared && cleared.startedAt === mon?.monitor?.startedAt ? cleared.at : 0
+      card.push(monitorTree(ui, b, mon, t, actions, {
+        clearAt, draft: view.flashDraft?.[b.port] ?? null, linkOpensFolder: !!view.linkOpensFolder, logDir: view.logDir ?? '', now,
+        filter: view.logFilter?.[b.port] ?? 'all', more: !!view.logMore?.[b.port], dismissed: view.flashDismissed?.[b.port] ?? null,
+      }))
+    }
+    children.push(Box({ key: `card:${b.port}`, flexDirection: 'column', gap: 1, children: card }))
   })
   for (const m of view.missingDriver ?? []) {
     children.push(Box({ key: `driver:${m.vid}:${m.pid}:${m.name}`, flexDirection: 'column', children: [
+      Text({ weight: 'semibold', color: 'red', children: [t('driver.title')] }),
       caption(t('driver.missing', { name: m.name, code: m.error_code }), { color: 'red' }),
       caption(t('driver.howto')),
     ] }))
   }
   if (view.python && view.python.state !== 'ok') {
-    children.push(caption(t(`python.${view.python.state}`, { detail: view.python.detail ?? '' }), { color: 'yellow' }))
+    children.push(Box({ key: 'python', flexDirection: 'column', children: [
+      Text({ weight: 'semibold', color: 'yellow', children: [t('python.title')] }),
+      caption(t(`python.${view.python.state}`, { detail: view.python.detail ?? '' }), { color: 'yellow' }),
+    ] }))
   }
-  if (!view.boards.length && !(view.missingDriver ?? []).length) children.push(caption(t('empty'), { dimColor: true }))
-  children.push(Button({ key: 'refresh', label: t('btn.refresh'), plain: true, onPress: actions.refresh }))
-  if (view.polling === 'pane') children.push(caption(t('polling.paneOnly'), { dimColor: true }))
+  if (!view.boards.length && !(view.missingDriver ?? []).length) {
+    children.push(Box({ key: 'empty', flexDirection: 'column', children: [
+      caption(t('empty.title')), caption(t('empty.step1')), caption(t('empty.step2')), caption(t('empty.step3')),
+    ] }))
+  }
+  children.push(Box({ flexDirection: 'row', gap: 1, alignItems: 'center', children: [
+    Button({ key: 'refresh', label: t('btn.refresh'), plain: true, onPress: actions.refresh }),
+    caption(t(view.polling === 'pane' ? 'polling.paneOnly' : 'footer.autoScan'), { dimColor: true }),
+  ] }))
   return Box({ flexDirection: 'column', gap: 1, paddingX: 1, children })
 }
 

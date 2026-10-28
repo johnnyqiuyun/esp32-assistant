@@ -89,6 +89,11 @@ test('test_health_poweron_reboot_is_fine', () => {
   assert.equal(h.key, 'health.running')
 })
 
+test('test_health_running_without_boot_uses_watch_time', () => {
+  const h = health(board(), monitor({ startedAt: 1000 }, { last_boot_at: null, last_reset: null }), 1120_000)
+  assert.deepEqual([h.tone, h.key, h.vars.watched], ['ok', 'health.watching', 120])
+})
+
 test('test_health_running_and_known_idle', () => {
   const h = health(board(), monitor({}, { last_boot_at: 1000 }), 1300_000)
   assert.deepEqual([h.tone, h.key, h.vars.seconds], ['ok', 'health.running', 300])

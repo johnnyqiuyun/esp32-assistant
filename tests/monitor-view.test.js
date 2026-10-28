@@ -36,13 +36,11 @@ test('test_running_summary', () => {
   for (const key of ['mon-stop:COM4', 'mon-pause:COM4', 'mon-reset:COM4', 'clear:COM4']) assert.ok(find(tree, key), key)
 })
 
-test('test_uptime_shown', () => {
-  assert.ok(texts(render(mon())).includes('1m 5s'))
-})
+// Uptime and the crash verdict moved to the board's verdict line: see pane-ux.test.js
+// (test_health_running_with_uptime, test_health_crashed_red).
 
-test('test_crashed_red', () => {
-  const tree = render(mon({ summary: summary({ status: 'crashed' }) }))
-  assert.equal(textNode(tree, zh['mon.status.crashed']).props.color, 'red')
+test('test_reset_reason_row', () => {
+  assert.ok(texts(render(mon())).includes(t('reset.title', { text: zh['reset.poweron'] })))
 })
 
 test('test_disconnected_reason_text', () => {
@@ -72,7 +70,7 @@ test('test_clear_hides_old_lines', () => {
 test('test_busy_buttons', () => {
   const tree = render(mon({ state: 'busy' }))
   assert.ok(find(tree, 'mon-retry:COM4'))
-  assert.ok(texts(tree).includes(zh['mon.busyHint']))
+  assert.ok(find(tree, 'mon-stop:COM4'))
 })
 
 test('test_paused_buttons', () => {

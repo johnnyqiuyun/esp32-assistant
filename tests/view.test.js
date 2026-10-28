@@ -43,10 +43,10 @@ const view = over => ({ boards: [board()], missingDriver: [], python: { state: '
 const noop = { probe() {}, refresh() {} }
 
 test('test_known_board', () => {
-  const tree = paneTree(ui, view(), t, noop)
+  const tree = paneTree(ui, view({ expanded: { COM4: true } }), t, noop) // MAC sits under Details
   const s = texts(tree)
   for (const want of ['ESP32-S3', 'COM4', '16MB', '8MB', '74:4d:bd:9d:b5:44']) assert.ok(s.includes(want), want)
-  const title = nodes(tree).find(n => n.type === 'Text' && n.props.weight === 'semibold')
+  const title = nodes(tree).find(n => n.type === 'Text' && n.props.weight === 'semibold' && String(n.props.children[0]).startsWith('●'))
   assert.equal(title.props.color, 'green')
   assert.equal(find(tree, 'probe:COM4').props.label, zh['btn.reprobe'])
 })
@@ -79,7 +79,7 @@ test('test_python_deps', () => {
 })
 
 test('test_empty', () => {
-  assert.ok(texts(paneTree(ui, view({ boards: [] }), t, noop)).includes(zh.empty))
+  assert.ok(texts(paneTree(ui, view({ boards: [] }), t, noop)).includes(zh['empty.title']))
 })
 
 test('test_pane_only_polling_note', () => {
