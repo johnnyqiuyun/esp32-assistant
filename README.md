@@ -1,4 +1,12 @@
-# esp32s3-bringup
+# esp32s3-bringup — ESP32 开发助手
+
+> 插上板子就知道它好不好、在干什么、出了问题该怎么办。作品说明见 [docs/作品说明.md](docs/作品说明.md)，
+> 界面设计原则见 [docs/design-ux.md](docs/design-ux.md)。
+
+**Human-centred pane (v0.3):** each board gets one plain-language verdict with the next step
+(running normally / crashed / restarting in a loop / port held by another program / download mode …),
+a compact spec line with details on demand, a Wi-Fi row with signal bars, restart reasons in plain
+words, a filterable log, and a flash flow with a confirm card, progress bar and result advice.
 
 A Claude Code / Velloc plugin for checking an ESP32-S3 board over USB. It finds
 the board, reads the chip without writing anything, and explains the boot log.

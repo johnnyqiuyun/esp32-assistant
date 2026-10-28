@@ -7,7 +7,8 @@
 
 import { lineLevel } from './core.js'
 import {
-  estimateFlashSeconds, filterLines, formatBytes, formatDuration, progressBar, resetKind, rssiQuality, signalBars,
+  estimateFlashSeconds, filterLines, flashResultVisible, formatBytes, formatDuration, isBadReset, progressBar, resetKind, rssiQuality,
+  signalBars,
 } from './ux.js'
 
 const LINE_STYLE = {
@@ -29,10 +30,11 @@ function wifiRow(ui, w, t) {
   if (w.state === 'connected') row = t('wifi.row.connected', { ssid: w.ssid ?? '?', ip: w.ip ?? '—' })
   else if (w.state === 'disconnected') {
     const reason = t(`wifi.reason.${w.reason}`)
-    row = t('wifi.row.disconnected', { text: reason === `wifi.reason.${w.reason}` ? `reason ${w.reason}` : reason })
+    row = t('wifi.row.disconnected', { text: reason === `wifi.reason.${w.reason}` ? t('wifi.reason.other', { code: w.reason }) : reason })
   } else row = t('wifi.row.unknown')
   const q = rssiQuality(w.rssi)
-  if (q) {
+  // A signal reading is only current while connected; the program's own non-dBm print is shown as is.
+  if (q && (w.state === 'connected' || q.key === 'nonstandard')) {
     row += ' · ' + (q.key === 'nonstandard'
       ? t('signal.nonstandard', { rssi: w.rssi, quality: t('rssi.nonstandard') })
       : t('signal', { bars: signalBars(q.bars), quality: t(`rssi.${q.key}`), rssi: w.rssi }))
@@ -49,13 +51,14 @@ function buttons(ui, port, state, t, actions) {
     paused: [b('mon-resume', 'btn.monResume', () => actions.monitorResume(port), 'primary'), b('mon-stop', 'btn.monStop', () => actions.monitorStop(port))],
     busy: [b('mon-retry', 'btn.monRetry', () => actions.monitorRetry(port), 'primary'), b('mon-stop', 'btn.monStop', () => actions.monitorStop(port))],
     waiting: [b('mon-stop', 'btn.monStop', () => actions.monitorStop(port))],
+    starting: [b('mon-stop', 'btn.monStop', () => actions.monitorStop(port))],
   }[state] ?? [b('mon-start', 'btn.monStart', () => actions.monitorStart(port), 'primary')]
   return Box({ key: `mon-buttons:${port}`, flexDirection: 'row', gap: 1, children: list })
 }
 
-function logSection(ui, port, mon, monitor, t, actions, opts) {
+function logSection(ui, port, mon, t, actions, opts) {
   const { Box, Text, Button } = ui
-  const s = monitor?.summary ?? {}
+  const s = mon?.monitor?.summary ?? {} // a stopped monitor still describes the lines it left
   const all = mon?.lines ?? []
   const shown = filterLines(all, { filter: opts.filter, clearAt: opts.clearAt, limit: opts.more ? LOG_LINES_MORE : LOG_LINES })
   const total = filterLines(all, { filter: opts.filter, clearAt: opts.clearAt, limit: Infinity }).length
@@ -64,7 +67,13 @@ function logSection(ui, port, mon, monitor, t, actions, opts) {
     Box({ flexDirection: 'row', gap: 1, children: FILTERS.map(([id, label]) => Button({ key: `filter-${id}:${port}`, label: t(label),
       variant: opts.filter === id ? 'primary' : 'secondary', onPress: () => actions.setLogFilter(port, id) })) }),
   ]
-  if (!shown.length) children.push(Text({ size: 'caption', dimColor: true, children: [t('log.empty')] }))
+  if (!shown.length) {
+    const hasOutput = all.some(line => line.i >= (opts.clearAt ?? 0))
+    const empty = opts.filter === 'problems' && hasOutput ? 'log.noProblems'
+      : opts.filter === 'wifi' && hasOutput ? 'log.noWifi'
+        : !hasOutput && all.length ? 'log.cleared' : 'log.empty'
+    children.push(Text({ size: 'caption', dimColor: true, children: [t(empty)] }))
+  }
   for (const line of shown) {
     children.push(Text({ key: `line:${port}:${line.i}`, size: 'caption', mono: true, wrap: 'wrap', ...LINE_STYLE[lineLevel(line.text)], children: [line.text] }))
   }
@@ -102,7 +111,7 @@ function flashSection(ui, port, flash, t, actions, opts) {
         Button({ key: `flash-cancel:${port}`, label: t('btn.flashCancel'), variant: 'secondary', onPress: () => actions.flashCancel(port) }),
       ] }),
     )
-  } else if (flash && (flash.state === 'done' || flash.state === 'failed') && !(opts.dismissed != null && opts.dismissed === flash.startedAt)) {
+  } else if (flashResultVisible(flash, opts.dismissed, opts.now)) {
     if (flash.state === 'done') {
       const took = flash.finishedAt && flash.startedAt ? formatDuration(flash.finishedAt - flash.startedAt, t) : '—'
       children.push(caption(`✅ ${t('flash.done', { file: fileName(flash.file), time: took })}`, { color: 'green' }))
@@ -116,7 +125,12 @@ function flashSection(ui, port, flash, t, actions, opts) {
   if (!draft?.confirming) {
     // Velloc shows no Input in a pane (spike 2), so the file comes from `/esp32 flash <path>`.
     children.push(caption(t('flash.hint', { port }), { dimColor: true }))
-    if (draft?.error) children.push(caption(t(`flash.error.${draft.error}`), { color: 'red' }))
+    if (draft?.error) {
+      children.push(Box({ flexDirection: 'row', gap: 1, alignItems: 'center', children: [
+        caption(t(`flash.error.${draft.error}`), { color: 'red' }),
+        Button({ key: `flash-error-dismiss:${port}`, label: t('btn.dismiss'), variant: 'secondary', onPress: () => actions.flashCancel(port) }),
+      ] }))
+    }
   }
   return Box({ key: `flash:${port}`, flexDirection: 'column', children })
 }
@@ -126,16 +140,21 @@ export function monitorTree(ui, board, mon, t, actions, opts) {
   const port = board.port
   const monitor = mon?.monitor && mon.monitor.state !== 'stopped' ? mon.monitor : null
   const children = []
-  if (monitor?.summary) {
-    children.push(wifiRow(ui, monitor.summary.wifi ?? {}, t))
+  const flashing = mon?.flash?.state === 'running'
+  if (monitor?.state === 'running' && monitor.summary) {
+    const w = monitor.summary.wifi ?? {}
+    // Firmware that never mentions Wi-Fi gets no Wi-Fi row at all.
+    if (w.state !== 'unknown' || (w.rssi !== null && w.rssi !== undefined)) children.push(wifiRow(ui, w, t))
     const kind = resetKind(monitor.summary.last_reset)
     if (kind) {
       const text = kind === 'other' ? monitor.summary.last_reset : t(`reset.${kind}`)
-      children.push(Text({ size: 'caption', dimColor: true, wrap: 'wrap', children: [t('reset.title', { text })] }))
+      children.push(Text({ size: 'caption', wrap: 'wrap', ...(isBadReset(kind) ? { color: 'yellow' } : { dimColor: true }),
+        children: [t('reset.title', { text })] }))
     }
   }
-  children.push(buttons(ui, port, monitor?.state, t, actions))
-  if (monitor || (mon?.lines ?? []).length) children.push(logSection(ui, port, mon, monitor, t, actions, opts))
+  // While flashing, the flash job owns the port; monitor controls would only confuse.
+  if (!flashing) children.push(buttons(ui, port, monitor?.state, t, actions))
+  if (monitor || (mon?.lines ?? []).length) children.push(logSection(ui, port, mon, t, actions, opts))
   children.push(flashSection(ui, port, mon?.flash, t, actions, opts))
   children.push(opts.linkOpensFolder
     ? Link({ key: `logdir:${port}`, href: `file:///${opts.logDir.replace(/\\/g, '/')}`, label: t('mon.logDir', { dir: opts.logDir }) })

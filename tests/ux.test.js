@@ -60,8 +60,9 @@ test('test_health_unprobed_and_probing', () => {
   assert.equal(health(board({ state: 'probing' }), monitor(), 0).key, 'health.probing')
 })
 
-test('test_health_probe_failed_wins', () => {
-  const h = health(board({ state: 'failed', reason: 'busy' }), monitor(), 0)
+test('test_health_probe_failed_without_monitor', () => {
+  // With a live monitor the monitor's verdict wins (ux-review.test.js: test_live_monitor_beats_old_probe_failure).
+  const h = health(board({ state: 'failed', reason: 'busy' }), null, 0)
   assert.equal(h.tone, 'error')
   assert.equal(h.key, 'health.probeFailed')
 })
@@ -97,7 +98,7 @@ test('test_health_running_without_boot_uses_watch_time', () => {
 test('test_health_running_and_known_idle', () => {
   const h = health(board(), monitor({}, { last_boot_at: 1000 }), 1300_000)
   assert.deepEqual([h.tone, h.key, h.vars.seconds], ['ok', 'health.running', 300])
-  assert.deepEqual(health(board(), null, 0), { tone: 'ok', key: 'health.idle' })
+  assert.deepEqual(health(board(), null, 0), { tone: 'ok', key: 'health.idle', vars: { chip: 'ESP32-S3' } })
 })
 
 test('test_filter_lines', () => {

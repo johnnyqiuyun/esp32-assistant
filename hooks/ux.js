@@ -59,23 +59,49 @@ export function formatDuration(seconds, t) {
   return t('dur.hm', { h: Math.floor(s / 3600), m: Math.floor((s % 3600) / 60) })
 }
 
+const BAD_RESETS = ['crash', 'watchdog', 'brownout']
+const BOOT_LOOP_BOOTS = 3
+const RECENT_LINES = 10
+const DONE_RESULT_MAX_AGE_S = 10 * 60
+
+/** Whether a flash job's result card should still be shown. */
+export function flashResultVisible(flash, dismissed, nowMs) {
+  if (!flash || (flash.state !== 'done' && flash.state !== 'failed')) return false
+  if (dismissed != null && dismissed === flash.startedAt) return false
+  if (flash.state === 'done' && flash.finishedAt && nowMs / 1000 - flash.finishedAt > DONE_RESULT_MAX_AGE_S) return false
+  return true
+}
+
 /**
  * The one-line verdict for a board: `{ tone: 'ok'|'warn'|'error'|'idle', key, vars? }`.
- * `monitor` is the live monitor state (null when none runs). Order follows docs/design-ux.md.
+ * `monitor` is the live monitor state (null when none runs); `extra` carries `{ flash, dismissed, lines }`.
+ * Order follows docs/design-ux.md: what is happening now beats what happened before.
  */
-export function health(board, monitor, nowMs) {
+export function health(board, monitor, nowMs, extra = {}) {
+  const { flash, dismissed, lines = [] } = extra
+  if (flash?.state === 'running') return { tone: 'warn', key: 'health.flashing', vars: { percent: flash.percent ?? 0 } }
+  if (flash?.state === 'failed' && flashResultVisible(flash, dismissed, nowMs)) {
+    return { tone: 'error', key: 'health.flashFailed', vars: { reason: flash.reason } }
+  }
   if (board.state === 'probing') return { tone: 'warn', key: 'health.probing' }
-  if (board.state === 'failed') return { tone: 'error', key: 'health.probeFailed', vars: { reason: board.reason } }
   if (monitor) {
     const s = monitor.summary ?? {}
+    if (monitor.state === 'starting') return { tone: 'idle', key: 'health.starting' }
     if (monitor.state === 'busy') return { tone: 'warn', key: 'health.busy' }
     if (monitor.state === 'waiting') return { tone: 'warn', key: 'health.waiting' }
-    if (monitor.state === 'paused') return { tone: 'idle', key: 'health.paused' }
     if (s.status === 'crashed') return { tone: 'error', key: 'health.crashed' }
-    const uptime = s.last_boot_at ? Math.max(0, Math.floor(nowMs / 1000 - s.last_boot_at)) : null
+    if (monitor.state === 'paused') return { tone: 'idle', key: 'health.paused' }
+    const recent = lines.slice(-RECENT_LINES).map(l => l.text).join('\n')
+    if (/waiting for download/i.test(recent)) return { tone: 'warn', key: 'health.download' }
+    if (/invalid header/i.test(recent)) return { tone: 'error', key: 'health.noFirmware' }
+    if (s.status === 'unknown') return { tone: 'idle', key: 'health.silent' }
     const kind = resetKind(s.last_reset)
+    if ((s.boots ?? 0) >= BOOT_LOOP_BOOTS && BAD_RESETS.includes(kind)) {
+      return { tone: 'error', key: 'health.bootLoop', vars: { n: s.boots, kind, raw: s.last_reset } }
+    }
+    const uptime = s.last_boot_at ? Math.max(0, Math.floor(nowMs / 1000 - s.last_boot_at)) : null
     if (uptime !== null && uptime < JUST_REBOOTED_S && kind && kind !== 'poweron') {
-      return { tone: 'warn', key: 'health.rebooted', vars: { kind } }
+      return { tone: 'warn', key: 'health.rebooted', vars: { kind, raw: s.last_reset } }
     }
     if (uptime === null && monitor.startedAt) {
       // The board booted before monitoring began, so only the watch time is known.
@@ -83,8 +109,14 @@ export function health(board, monitor, nowMs) {
     }
     return { tone: 'ok', key: 'health.running', vars: { seconds: uptime } }
   }
+  if (board.state === 'failed') return { tone: 'error', key: 'health.probeFailed', vars: { reason: board.reason } }
   if (board.state === 'unprobed') return { tone: 'idle', key: 'health.unprobed' }
-  return { tone: 'ok', key: 'health.idle' }
+  return { tone: 'ok', key: 'health.idle', vars: { chip: board.info?.chip ?? 'ESP' } }
+}
+
+/** A reset kind whose restart is worth a second look (shown in yellow). */
+export function isBadReset(kind) {
+  return BAD_RESETS.includes(kind)
 }
 
 /** Lines to show: after the last Clear, matching the filter, the newest `limit` of them. */
@@ -99,7 +131,8 @@ export function filterLines(lines, { filter, clearAt, limit }) {
 
 /** The pane's headline: how many things need the person's attention. */
 export function overview(boards, healths, missingDriver, python) {
-  const issues = healths.filter(h => h.tone === 'error' || h.tone === 'warn').length
+  // Probing or a restart the person just caused are not problems; errors and a held port are.
+  const issues = healths.filter(h => h.tone === 'error' || h.key === 'health.busy' || h.key === 'health.download').length
     + (missingDriver ?? []).length + (python && python.state !== 'ok' ? 1 : 0)
   if (issues) return { tone: healths.some(h => h.tone === 'error') || (missingDriver ?? []).length ? 'error' : 'warn',
     key: 'overview.issues', vars: { n: issues } }
