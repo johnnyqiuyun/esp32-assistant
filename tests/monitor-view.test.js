@@ -87,10 +87,10 @@ test('test_no_monitor_start_button', () => {
   assert.equal(find(tree, 'mon-stop:COM4'), undefined)
 })
 
-test('test_flash_input_and_ask', () => {
+test('test_flash_hint_without_input', () => {
   const tree = render(mon())
-  assert.equal(find(tree, 'flash-path:COM4').type, 'Input')
-  assert.ok(find(tree, 'flash-ask:COM4'))
+  assert.ok(texts(tree).includes(t('flash.hint', { port: 'COM4' })))
+  assert.equal(nodes(tree).find(n => n.type === 'Input'), undefined)
 })
 
 test('test_flash_confirm_flow', () => {

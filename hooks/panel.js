@@ -2,9 +2,9 @@
  * ESP32 bring-up in the Velloc session: a pane that shows which ESP boards are
  * plugged in and what they are.
  *
- * - Every POLL_MS it runs `esp32_bringup.py ports --json`, which lists USB
+ * - Every SCAN_EVERY ticks it runs `esp32_bringup.py ports --json`, which lists USB
  *   serial ports without opening them, so polling never resets a board. Every
- *   DRIVER_EVERY-th scan also asks Windows for devices with a missing driver.
+ *   DRIVER_EVERY ticks it also asks Windows for devices with a missing driver.
  * - It never opens a serial port on its own. `probe` (which resets the board
  *   once) runs only when the person presses Check / Check again.
  * - Probe results are kept in `$.store` under STORE_KEY by USB serial number,
@@ -15,14 +15,24 @@
  * Runtime facts (worker lifetime, status line) are from docs/spike-notes.md.
  */
 
-import { applyProbe, newPorts, pythonCandidates, recordKey, reconcile } from './core.js'
+import {
+  applyProbe, forgetStopped, liveMonitor, newPorts, parseFlashArgs, pythonCandidates, recordKey, reconcile, shouldAutostart,
+} from './core.js'
 import { loadTexts } from './texts.js'
 import { paneTree, statusText } from './view.js'
 
 const PANE_ID = 'esp32'
 const COMMAND = 'esp32'
-const POLL_MS = 2000
-const DRIVER_EVERY = 5
+const TICK_MS = 1000
+const SCAN_EVERY = 2 // ticks
+const DRIVER_EVERY = 10 // ticks
+const STATUS_CLOSED_EVERY = 5 // ticks between monitor reads while the pane is closed
+const AUTOSTART_BACKOFF_MS = 10000
+// Velloc ends a $.process.run child when the call returns (spike 2), so a monitor or flash job runs as one
+// long call that is not awaited; Velloc ends it with the session.
+const MONITOR_RUN_TIMEOUT_MS = 24 * 3600 * 1000
+const FLASH_TIMEOUT_MS = 35 * 60 * 1000
+const CONTROL_TIMEOUT_MS = 10000
 const PORTS_TIMEOUT_MS = 10000
 const PROBE_TIMEOUT_MS = 40000
 const PY_CHECK_TIMEOUT_MS = 10000
@@ -46,6 +56,13 @@ export function register(on) {
   let firstScan = true
   let paneOpen = false
   let publishing = Promise.resolve()
+  let home = ''
+  let monitors = {} // port -> { monitor, lines, flash } read from the monitor's files
+  const runs = {} // port -> true while a monitor started by this pane is running
+  const lastStart = {} // port -> ms of the last automatic start
+  let stoppedPorts = []
+  const clearAt = {}
+  const flashDraft = {}
   const ref = $ => ({ plugin: $.plugin.name, key: 'view' })
   const script = $ => `${$.plugin.root}/scripts/esp32_bringup.py`
 
@@ -59,7 +76,87 @@ export function register(on) {
       missingDriver,
       python: pythonState,
       polling: BACKGROUND_POLL ? 'background' : 'pane',
+      monitors,
+      clearAt,
+      flashDraft,
+      logDir: `${home}\\logs`,
+      linkOpensFolder: false, // spike 2: a Link cannot open a local folder
+      now: Date.now(),
     }
+  }
+
+  async function readJson($, path) {
+    return quietly(async () => JSON.parse(await $.fs.read(path)), null)
+  }
+
+  async function readMonitors($) {
+    const now = Date.now()
+    const next = {}
+    for (const { port } of scan) {
+      const state = await readJson($, `${home}\\monitors\\${port}.json`)
+      const flash = await readJson($, `${home}\\jobs\\${port}.flash.json`)
+      const live = liveMonitor(state, now)
+      next[port] = { monitor: live ?? (state ? { ...state, state: 'stopped' } : null), lines: live?.tail ?? state?.tail ?? [], flash }
+    }
+    monitors = next
+  }
+
+  function startMonitor(port) {
+    if (runs[port] || !python) return
+    const entry = scan.find(p => p.port === port)
+    runs[port] = true
+    lastStart[port] = Date.now()
+    void root.process.run([...python, script(root), 'monitor', 'run', '--port', port, '--key', entry?.serial ?? port, '--no-heartbeat'],
+      { timeoutMs: MONITOR_RUN_TIMEOUT_MS })
+      .catch(() => undefined)
+      .finally(() => { delete runs[port] })
+  }
+
+  function autostart() {
+    const now = Date.now()
+    for (const board of reconcile(scan, records, transient)) {
+      if (now - (lastStart[board.port] ?? 0) < AUTOSTART_BACKOFF_MS) continue
+      if (shouldAutostart(board, monitors[board.port]?.monitor ?? null, stoppedPorts)) startMonitor(board.port)
+    }
+  }
+
+  async function control(port, cmd) {
+    await quietly(() => runScript(root, ['monitor', cmd, '--port', port, '--json'], CONTROL_TIMEOUT_MS))
+    await readMonitors(root)
+    await quietly(() => publish(root))
+  }
+
+  function flashSizeOf(port) {
+    const board = reconcile(scan, records, transient).find(b => b.port === port)
+    return board?.info?.flash?.size ?? null
+  }
+
+  async function askFlash($, port, path) {
+    const size = flashSizeOf(port)
+    const result = await quietly(() => runScript($, ['flash', '--port', port, path, '--json', ...(size ? ['--flash-size', size] : [])], CONTROL_TIMEOUT_MS))
+    const out = result?.json
+    if (out?.reason === 'needs_yes') flashDraft[port] = { path: out.plan.file, confirming: true }
+    else flashDraft[port] = { path, confirming: false, error: out?.detail ?? out?.reason ?? 'error' }
+  }
+
+  function confirmFlash(port) {
+    const draft = flashDraft[port]
+    if (!draft?.confirming || !python) return
+    const size = flashSizeOf(port)
+    flashDraft[port] = { path: draft.path, confirming: false }
+    void root.process.run([...python, script(root), 'flash', '--port', port, draft.path, '--yes', '--wait', '--json',
+      ...(size ? ['--flash-size', size] : [])], { timeoutMs: FLASH_TIMEOUT_MS })
+      .then(ran => {
+        let out = null
+        try { out = JSON.parse(String(ran?.stdout ?? '').trim().split(/\r?\n/).at(-1)) } catch {}
+        // A refusal before flashing (bad image, already flashing) has no job state; a job result shows from its file.
+        if (out && !out.ok && !out.state) flashDraft[port] = { path: draft.path, confirming: false, error: out.detail ?? out.reason }
+      })
+      .catch(() => undefined)
+      .finally(async () => {
+        await readMonitors(root)
+        await quietly(() => publish(root))
+      })
   }
 
   async function publish($) {
@@ -120,6 +217,9 @@ export function register(on) {
       const present = new Set(scan.map(p => p.port))
       transient = Object.fromEntries(Object.entries(transient).filter(([port]) => present.has(port)))
       records = (await quietly(() => $.store.get(STORE_KEY))) ?? records
+      stoppedPorts = forgetStopped(stoppedPorts, scan)
+      await readMonitors($)
+      autostart()
       if (added.length && !firstScan && !paneOpen) await quietly(() => $.ui.open({ id: PANE_ID, title: t('pane.title') }))
       firstScan = false
     } finally {
@@ -160,25 +260,62 @@ export function register(on) {
       pythonResolved = false
       void doScan(root, true)
     },
+    monitorStart: port => {
+      stoppedPorts = stoppedPorts.filter(p => p !== port)
+      startMonitor(port)
+    },
+    monitorStop: port => {
+      if (!stoppedPorts.includes(port)) stoppedPorts = [...stoppedPorts, port]
+      void control(port, 'stop')
+    },
+    monitorPause: port => { void control(port, 'pause') },
+    monitorResume: port => { void control(port, 'resume') },
+    monitorReset: port => { void control(port, 'reset') },
+    monitorRetry: port => { void control(port, 'retry') },
+    clear: port => {
+      const lines = monitors[port]?.lines ?? []
+      clearAt[port] = lines.length ? lines.at(-1).i + 1 : 0
+      void quietly(() => publish(root))
+    },
+    flashConfirm: port => {
+      confirmFlash(port)
+      void quietly(() => publish(root))
+    },
+    flashCancel: port => {
+      delete flashDraft[port]
+      void quietly(() => publish(root))
+    },
   }
 
   on('session.start', async ($, e, next) => {
     root = $
     t = await loadTexts($)
-    await quietly(() => $.command.register({ name: COMMAND, description: t('command.description') }))
+    await quietly(() => $.command.register({ name: COMMAND, description: t('command.description'), argumentHint: '[flash <file.bin> [COMx]]' }))
+    home = (await quietly(() => $.env.get('ESP32_BRINGUP_HOME'))) ||
+      `${(await quietly(() => $.env.get('LOCALAPPDATA'))) ?? ''}\\esp32s3-bringup`
     records = (await quietly(() => $.store.get(STORE_KEY))) ?? {}
     void doScan($, true) // finding Python and asking Windows for drivers takes seconds; don't hold the session start
-    $.clock.every(POLL_MS, () => {
+    $.clock.every(TICK_MS, () => {
       if (!BACKGROUND_POLL && !paneOpen) return
       ticks += 1
-      void doScan(root, ticks % DRIVER_EVERY === 0)
+      if (ticks % SCAN_EVERY === 0) {
+        void doScan(root, ticks % DRIVER_EVERY === 0)
+      } else if (paneOpen || ticks % STATUS_CLOSED_EVERY === 1) {
+        void readMonitors(root).then(() => quietly(() => publish(root)))
+      }
     })
     return next(e)
   })
 
-  on('command.run', { command: COMMAND }, async $ => {
+  on('command.run', { command: COMMAND }, async ($, e) => {
     if (!python) pythonResolved = false
     await doScan($, true)
+    const request = parseFlashArgs(e?.args ?? '', scan)
+    if (request?.error) return { text: t(`flash.error.${request.error}`) }
+    if (request) {
+      await askFlash($, request.port, request.path)
+      await quietly(() => publish($))
+    }
     await $.ui.open({ id: PANE_ID, title: t('pane.title'), focus: true })
     return {}
   })

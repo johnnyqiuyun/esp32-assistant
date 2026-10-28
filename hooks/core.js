@@ -93,3 +93,32 @@ export function lineLevel(text) {
   if (WIFI.test(line)) return 'wifi'
   return 'info'
 }
+
+const MONITOR_STALE_MS = 5000
+
+/** A monitor state file still being written (its process alive), else null. `updatedAt` is in seconds. */
+export function liveMonitor(state, nowMs) {
+  return state && nowMs - (state.updatedAt ?? 0) * 1000 <= MONITOR_STALE_MS ? state : null
+}
+
+/**
+ * `/esp32 flash <path> [COMx]` → `{ port, path }`; `{ error: 'no_board', path }` when the port is not given
+ * and there is not exactly one board; null when the arguments are not a flash request.
+ */
+export function parseFlashArgs(args, boards) {
+  const m = /^\s*flash\s+(.+?)\s*$/i.exec(args ?? '')
+  if (!m) return null
+  let rest = m[1]
+  let port = null
+  const portMatch = /\s+(COM\d+)$/i.exec(rest)
+  if (portMatch) {
+    port = portMatch[1].toUpperCase()
+    rest = rest.slice(0, portMatch.index)
+  }
+  const path = rest.trim().replace(/^["']|["']$/g, '')
+  if (!port) {
+    if (boards.length !== 1) return { error: 'no_board', path }
+    port = boards[0].port
+  }
+  return { port, path }
+}

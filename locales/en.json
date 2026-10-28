@@ -54,7 +54,6 @@
   "btn.monReset": "Reset",
   "btn.monRetry": "Retry",
   "btn.clear": "Clear",
-  "btn.flash": "Flash…",
   "btn.flashConfirm": "Flash it",
   "btn.flashCancel": "Cancel",
   "wifi.connected": "Wi-Fi connected {ssid} {ip}",
@@ -69,7 +68,6 @@
   "wifi.reason.203": "association failed",
   "wifi.reason.204": "handshake timeout, wrong password?",
   "wifi.reason.205": "connection failed",
-  "flash.placeholder": "Paste the full path of a merged .bin",
   "flash.confirm": "Flash {file} at 0x0 on {port}? This replaces the program on the board.",
   "flash.progress": "Flashing {percent}% · {file}",
   "flash.done": "Flashed: {file}",
@@ -81,5 +79,7 @@
   "flash.error.already_flashing": "This board is already being flashed",
   "flash.error.busy": "Port busy",
   "flash.error.no_response": "The board did not answer",
-  "flash.error.error": "Flash error"
+  "flash.error.error": "Flash error",
+  "flash.hint": "To flash: type /esp32 flash <full path of a merged .bin> {port}",
+  "flash.error.no_board": "No board to flash; add the port, e.g. /esp32 flash C:\fw\u0007.bin COM4"
 }

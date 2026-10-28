@@ -56,7 +56,7 @@ function buttons(ui, port, state, t, actions) {
 }
 
 function flashSection(ui, port, flash, draft, t, actions) {
-  const { Box, Text, Button, Input } = ui
+  const { Box, Text, Button } = ui
   const caption = (value, props = {}) => Text({ size: 'caption', wrap: 'wrap', ...props, children: [value] })
   const file = path => String(path ?? '').split(/[\\/]/).at(-1)
   if (flash?.state === 'running') return caption(t('flash.progress', { percent: flash.percent ?? 0, file: file(flash.file) }), { color: 'yellow' })
@@ -72,11 +72,8 @@ function flashSection(ui, port, flash, draft, t, actions) {
       ] }),
     )
   } else {
-    children.push(Box({ flexDirection: 'row', gap: 1, children: [
-      Box({ flexGrow: 1, children: [Input({ key: `flash-path:${port}`, value: draft?.path ?? '', placeholder: t('flash.placeholder'),
-        onInput: text => actions.flashInput(port, text), onSubmit: () => actions.flashAsk(port) })] }),
-      Button({ key: `flash-ask:${port}`, label: t('btn.flash'), onPress: () => actions.flashAsk(port) }),
-    ] }))
+    // Velloc shows no Input in a pane (spike 2), so the file comes from `/esp32 flash <path>`.
+    children.push(caption(t('flash.hint', { port }), { dimColor: true }))
     if (draft?.error) children.push(caption(t(`flash.error.${draft.error}`), { color: 'red' }))
   }
   return Box({ key: `flash:${port}`, flexDirection: 'column', children })

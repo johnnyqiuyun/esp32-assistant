@@ -144,3 +144,32 @@ test('test_line_level_info', () => {
 test('test_forget_stopped_on_unplug', () => {
   assert.deepEqual(forgetStopped(['COM4', 'COM7'], [{ port: 'COM7' }]), ['COM7'])
 })
+
+// ---- phase 2: /esp32 flash arguments and monitor liveness
+import { liveMonitor, parseFlashArgs } from '../hooks/core.js'
+
+test('test_flash_args_single_board', () => {
+  assert.deepEqual(parseFlashArgs('flash C:\fw\a.merged.bin', [boardOf()]), { port: 'COM4', path: 'C:\fw\a.merged.bin' })
+})
+
+test('test_flash_args_quoted_path_with_spaces_and_port', () => {
+  const boards = [boardOf(), boardOf({ port: 'COM7' })]
+  assert.deepEqual(parseFlashArgs('flash "C:\My FW\a.bin" com7', boards), { port: 'COM7', path: 'C:\My FW\a.bin' })
+})
+
+test('test_flash_args_ambiguous_board', () => {
+  assert.deepEqual(parseFlashArgs('flash a.bin', [boardOf(), boardOf({ port: 'COM7' })]), { error: 'no_board', path: 'a.bin' })
+  assert.deepEqual(parseFlashArgs('flash a.bin', []), { error: 'no_board', path: 'a.bin' })
+})
+
+test('test_flash_args_not_flash', () => {
+  assert.equal(parseFlashArgs('', [boardOf()]), null)
+  assert.equal(parseFlashArgs('flash', [boardOf()]), null)
+})
+
+test('test_live_monitor_fresh_and_stale', () => {
+  const st = { state: 'running', updatedAt: 1000 }
+  assert.equal(liveMonitor(st, 1003_000), st)
+  assert.equal(liveMonitor(st, 1010_000), null)
+  assert.equal(liveMonitor(null, 1000_000), null)
+})
