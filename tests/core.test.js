@@ -86,3 +86,61 @@ test('test_keyless_checked_in_session_shows_info', () => {
   assert.equal(b.info.chip, 'ESP32-S3')
   assert.equal(b.probedAt, 'T')
 })
+
+// ---- phase 2: autostart and line levels
+import { forgetStopped, lineLevel, shouldAutostart } from '../hooks/core.js'
+
+const boardOf = over => ({ port: 'COM4', bridge: 'cp210x', serial: SERIAL, key: KEY, state: 'known', info: info(), probedAt: 'T', reason: null, detail: null, ...over })
+
+test('test_autostart_known', () => {
+  assert.equal(shouldAutostart(boardOf(), null, []), true)
+})
+
+test('test_autostart_native_usb_unprobed', () => {
+  assert.equal(shouldAutostart(boardOf({ bridge: 'espressif-usb', state: 'unprobed', info: null }), null, []), true)
+})
+
+test('test_no_autostart_unprobed_cp210x', () => {
+  assert.equal(shouldAutostart(boardOf({ state: 'unprobed', info: null }), null, []), false)
+})
+
+test('test_no_autostart_when_running', () => {
+  assert.equal(shouldAutostart(boardOf(), { state: 'running' }, []), false)
+  assert.equal(shouldAutostart(boardOf(), { state: 'busy' }, []), false)
+})
+
+test('test_no_autostart_after_manual_stop', () => {
+  assert.equal(shouldAutostart(boardOf(), null, ['COM4']), false)
+})
+
+test('test_autostart_when_monitor_stopped', () => {
+  assert.equal(shouldAutostart(boardOf(), { state: 'stopped' }, []), true)
+})
+
+test('test_no_autostart_while_probing', () => {
+  assert.equal(shouldAutostart(boardOf({ state: 'probing' }), null, []), false)
+})
+
+test('test_line_level_panic', () => {
+  assert.equal(lineLevel("12:00:00.000 Guru Meditation Error: Core  0 panic'ed (LoadProhibited)."), 'panic')
+  assert.equal(lineLevel('abort() was called at PC 0x4200'), 'panic')
+})
+
+test('test_line_level_error_warn', () => {
+  assert.equal(lineLevel('12:00:00.000 E (100) app: bad'), 'error')
+  assert.equal(lineLevel('W (100) spi_flash: Detected size'), 'warn')
+})
+
+test('test_line_level_wifi', () => {
+  assert.equal(lineLevel('12:00:00.000 I (900) wifi:connected with MyAP'), 'wifi')
+  assert.equal(lineLevel('I (1500) esp_netif_handlers: sta ip: 192.168.1.23'), 'wifi')
+  assert.equal(lineLevel('RSSI: 3 '), 'wifi')
+})
+
+test('test_line_level_info', () => {
+  assert.equal(lineLevel('12:00:00.000 I (1) main_task: Calling app_main()'), 'info')
+})
+
+test('test_forget_stopped_on_unplug', () => {
+  assert.deepEqual(forgetStopped(['COM4', 'COM7'], [{ port: 'COM7' }]), ['COM7'])
+})

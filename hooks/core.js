@@ -62,3 +62,34 @@ export function newPorts(prevPortNames, scan) {
   const before = new Set(prevPortNames)
   return scan.map(p => p.port).filter(name => !before.has(name))
 }
+
+/**
+ * Whether the pane should start monitoring this board by itself: only for a
+ * board known to be an ESP (checked before, or Espressif native USB), with no
+ * live monitor, and not stopped by hand since it was plugged in.
+ */
+export function shouldAutostart(board, monitor, stoppedPorts) {
+  const isEsp = board.state === 'known' || board.bridge === 'espressif-usb'
+  const live = monitor && monitor.state !== 'stopped'
+  return isEsp && !live && board.state !== 'probing' && !stoppedPorts.includes(board.port)
+}
+
+/** Ports stopped by hand stay stopped only until they are unplugged. */
+export function forgetStopped(stoppedPorts, scan) {
+  const present = new Set(scan.map(p => p.port))
+  return stoppedPorts.filter(port => present.has(port))
+}
+
+const STAMP = /^\d\d:\d\d:\d\d\.\d{3} /
+const PANIC = /Guru Meditation|abort\(\) was called|panic'ed/
+const WIFI = /wifi:|sta ip:|got ip:|\brssi\b/i
+
+/** How a monitor log line is coloured: 'panic' | 'error' | 'warn' | 'wifi' | 'info'. */
+export function lineLevel(text) {
+  const line = text.replace(STAMP, '')
+  if (PANIC.test(line)) return 'panic'
+  if (line.startsWith('E (')) return 'error'
+  if (line.startsWith('W (')) return 'warn'
+  if (WIFI.test(line)) return 'wifi'
+  return 'info'
+}
