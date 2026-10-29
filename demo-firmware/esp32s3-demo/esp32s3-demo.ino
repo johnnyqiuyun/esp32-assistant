@@ -1,7 +1,7 @@
 // ESP32 Assistant demo firmware — gives the pane and the AI diagnosis something real to find.
 //
 // One sketch, four builds (DEMO_SCENARIO, set by demo-firmware/build.ps1):
-//   0 healthy   prints fake sensor readings every 2 s; pressing BOOT triggers a NULL-pointer crash on camera
+//   0 healthy   prints fake sensor readings every 2 s; pressing BOOT prints a log line, proving the board responds
 //   1 crash     writes through a NULL pointer 5 s after boot -> Guru Meditation -> reboot -> crash again
 //   2 wifi      tries to join an access point that does not exist -> disconnect reason 201 (NO_AP_FOUND)
 //   3 watchdog  the main task stops yielding -> task watchdog panic -> reboot -> again
@@ -80,13 +80,21 @@ void setup() {
 void loop() {
   static unsigned long last = 0;
   static int lastButton = HIGH;
+  static unsigned long pressedAt = 0;
+  static unsigned presses = 0;
   unsigned long now = millis();
 
   if (DEMO_SCENARIO == 1 && now > 5000) crashNow("sensor buffer used before allocation");
 
   if (DEMO_SCENARIO == 0) {
-    int button = digitalRead(DEMO_BUTTON_PIN);
-    if (lastButton == HIGH && button == LOW) crashNow("BOOT pressed: simulating a bug");
+    int button = digitalRead(DEMO_BUTTON_PIN);  // BOOT is active low; loop() runs every 20 ms, enough to debounce
+    if (lastButton == HIGH && button == LOW) {
+      presses++;
+      pressedAt = now;
+      LOG('I', "button", "BOOT pressed (#%u), uptime %lu s, free heap %u bytes", presses, now / 1000, ESP.getFreeHeap());
+    } else if (lastButton == LOW && button == HIGH) {
+      LOG('I', "button", "BOOT released after %lu ms", now - pressedAt);
+    }
     lastButton = button;
   }
 

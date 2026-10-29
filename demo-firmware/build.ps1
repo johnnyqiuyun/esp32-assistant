@@ -2,6 +2,7 @@
 # Needs arduino-cli with the esp32:esp32 core. Output: demo-firmware\bin\demo-<scenario>.merged.bin
 # Not 'Stop': arduino-cli prints compiler notes on stderr, which PowerShell 5.1 would turn into errors.
 # Success is judged by $LASTEXITCODE below.
+param([string[]]$Only)  # e.g. -Only healthy; default: all four
 $ErrorActionPreference = 'Continue'
 $cli = (Get-Command arduino-cli -ErrorAction SilentlyContinue).Source
 if (-not $cli) { $cli = 'C:\Program Files\Arduino CLI\arduino-cli.exe' }
@@ -14,6 +15,7 @@ $fqbn = 'esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=default'
 $scenarios = @('healthy', 'crash', 'wifi', 'watchdog')
 for ($n = 0; $n -lt $scenarios.Count; $n++) {
   $name = $scenarios[$n]
+  if ($Only -and $name -notin $Only) { continue }
   $build = Join-Path $env:TEMP "esp32s3-demo-build-$name"
   & $cli compile --fqbn $fqbn --build-property "compiler.cpp.extra_flags=-DDEMO_SCENARIO=$n" --output-dir $build $sketch
   if ($LASTEXITCODE -ne 0) { throw "build failed: $name" }
