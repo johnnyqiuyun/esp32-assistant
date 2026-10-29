@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .superpowers/
 backup/
+demo-firmware/**/build/
+demo-firmware/**/sdkconfig
+demo-firmware/bin/
