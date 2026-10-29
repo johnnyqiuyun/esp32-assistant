@@ -1,7 +1,11 @@
-# esp32s3-bringup — ESP32 开发助手
+# ESP32 Assistant (esp32s3-bringup)
 
-> 插上板子就知道它好不好、在干什么、出了问题该怎么办。作品说明见 [docs/作品说明.md](docs/作品说明.md)，
-> 界面设计原则见 [docs/design-ux.md](docs/design-ux.md)。
+**Plug in an ESP32-S3 and know in seconds whether it works, what it is doing, and — with NVIDIA Nemotron on
+Nebius Token Factory — why it is failing and how to fix it.**
+Built for the Nebius × NVIDIA Global AI Hackathon (Physical AI track).
+
+- Project description: [docs/devpost-en.md](docs/devpost-en.md) · intro slides: [docs/ESP32-Assistant.pptx](docs/ESP32-Assistant.pptx) · demo firmware: [demo-firmware/](demo-firmware/)
+- 中文作品说明：[docs/作品说明.md](docs/作品说明.md) · 界面设计原则：[docs/design-ux.md](docs/design-ux.md)
 
 **Human-centred pane (v0.3):** each board gets one plain-language verdict with the next step
 (running normally / crashed / restarting in a loop / port held by another program / download mode …),
