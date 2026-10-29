@@ -5,6 +5,7 @@ monitor's summary (status, boots, last reset reason, error/warning counts, Wi-Fi
 the last CONTEXT_LINES lines of the serial log. Standard library only (urllib).
 """
 import json
+import os
 import re
 import time
 import urllib.error
@@ -31,6 +32,37 @@ SYSTEM = (
     "At most 4 steps. Write cause and steps in %s."
 )
 LANGUAGES = {"zh": "Simplified Chinese", "en": "English"}
+
+
+KEY_FILE = "nebius-api-key"  # in the data folder (%LOCALAPPDATA%\esp32s3-bringup, private to the Windows user)
+
+
+def load_key(env, home):
+    """The Nebius API key: NEBIUS_API_KEY if set, else the key file.
+
+    Velloc does not pass NEBIUS_API_KEY on to the processes a mod starts, so `ai-key import`
+    copies it into the key file once, from a normal terminal.
+    """
+    if env.get("NEBIUS_API_KEY"):
+        return env["NEBIUS_API_KEY"].strip()
+    try:
+        with open(os.path.join(home, KEY_FILE), encoding="utf-8") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def save_key(home, key):
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, KEY_FILE), "w", encoding="utf-8") as f:
+        f.write(key.strip())
+
+
+def clear_key(home):
+    try:
+        os.remove(os.path.join(home, KEY_FILE))
+    except OSError:
+        pass
 
 
 def context_from_state(state, board=""):

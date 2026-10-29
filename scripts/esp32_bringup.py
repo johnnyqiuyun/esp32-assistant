@@ -528,7 +528,7 @@ def cmd_explain(a):
     state = esp_monitor.read_json(esp_monitor.paths(a.port)["state"])
     ctx = esp_ai.context_from_state(state, board=a.board)
     model = a.model or os.environ.get("ESP32_AI_MODEL") or esp_ai.DEFAULT_MODEL
-    result = esp_ai.explain(ctx, api_key=os.environ.get("NEBIUS_API_KEY"), model=model, lang=a.lang)
+    result = esp_ai.explain(ctx, api_key=esp_ai.load_key(os.environ, esp_monitor.home()), model=model, lang=a.lang)
     if a.json:
         emit(result)
     elif result["ok"]:
@@ -538,6 +538,26 @@ def cmd_explain(a):
     else:
         print("AI diagnosis failed: %s %s" % (result["reason"], result.get("detail", "")))
     return 0 if result["ok"] else 1
+
+
+def cmd_ai_key(a):
+    """Store, check or remove the Nebius API key used by `explain`. The key itself is never printed."""
+    home = esp_monitor.home()
+    if a.action == "import":
+        key = (os.environ.get("NEBIUS_API_KEY") or "").strip()
+        if not key:
+            emit({"ok": False, "reason": "no_key", "detail": "NEBIUS_API_KEY is not set in this terminal"})
+            return 1
+        esp_ai.save_key(home, key)
+    elif a.action == "clear":
+        esp_ai.clear_key(home)
+    file_key = esp_ai.load_key({}, home)
+    # After import, report the file: that is the copy Velloc's processes will read.
+    env_key = "" if a.action == "import" else (os.environ.get("NEBIUS_API_KEY") or "").strip()
+    key = env_key or file_key
+    emit({"ok": bool(key), "source": "env" if env_key else "file" if file_key else None,
+          "hint": ("…" + key[-4:]) if key else None, "file": os.path.join(home, esp_ai.KEY_FILE)})
+    return 0 if key or a.action == "clear" else 1
 
 
 # ------------------------------------------------------------------- main ---
@@ -579,6 +599,11 @@ def main(argv=None):
     p.add_argument("--model", default=None, help="default: $ESP32_AI_MODEL or %s" % esp_ai.DEFAULT_MODEL)
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_explain)
+
+    p = sub.add_parser("ai-key", help="import|status|clear the Nebius API key file used by explain")
+    p.add_argument("action", choices=("import", "status", "clear"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_ai_key)
 
     p = sub.add_parser("home", help="print the data folder (monitor state, logs, flash jobs)")
     p.add_argument("--json", action="store_true")

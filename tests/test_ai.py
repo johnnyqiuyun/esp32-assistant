@@ -107,6 +107,49 @@ class CallTest(unittest.TestCase):
         self.assertEqual(esp_ai.explain(ctx, api_key="K", model="m", lang="en", opener=slow)["reason"], "timeout")
 
 
+class KeyFileTest(unittest.TestCase):
+    """Velloc does not pass NEBIUS_API_KEY to the processes a mod starts, so the key can live in a file."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        os.environ["ESP32_BRINGUP_HOME"] = self.home
+
+    def test_env_wins_then_file(self):
+        self.assertIsNone(esp_ai.load_key({}, self.home))
+        esp_ai.save_key(self.home, "FILEKEY\n")
+        self.assertEqual(esp_ai.load_key({}, self.home), "FILEKEY")
+        self.assertEqual(esp_ai.load_key({"NEBIUS_API_KEY": "ENVKEY"}, self.home), "ENVKEY")
+        self.assertEqual(esp_ai.load_key({"NEBIUS_API_KEY": ""}, self.home), "FILEKEY")
+
+    def run_cli(self, *argv, env=None):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, env or {}), mock.patch("sys.stdout", out):
+            code = cli.main(list(argv))
+        return code, json.loads(out.getvalue().strip().splitlines()[-1])
+
+    def test_ai_key_import_status_clear(self):
+        code, out = self.run_cli("ai-key", "import", "--json", env={"NEBIUS_API_KEY": "ABCDEFGH12345678"})
+        self.assertEqual((code, out["ok"], out["source"]), (0, True, "file"))
+        self.assertNotIn("ABCDEFGH12345678", json.dumps(out))  # never echo the key
+        self.assertEqual(esp_ai.load_key({}, self.home), "ABCDEFGH12345678")
+        code, out = self.run_cli("ai-key", "status", "--json", env={"NEBIUS_API_KEY": ""})
+        self.assertEqual((out["ok"], out["source"], out["hint"]), (True, "file", "…5678"))
+        code, out = self.run_cli("ai-key", "clear", "--json", env={"NEBIUS_API_KEY": ""})
+        self.assertIsNone(esp_ai.load_key({}, self.home))
+
+    def test_ai_key_import_without_env(self):
+        code, out = self.run_cli("ai-key", "import", "--json", env={"NEBIUS_API_KEY": ""})
+        self.assertEqual((code, out["ok"], out["reason"]), (1, False, "no_key"))
+
+    def test_explain_uses_key_file(self):
+        esp_ai.save_key(self.home, "FILEKEY")
+        mon.write_json_atomic(mon.paths("COM9")["state"], STATE)
+        fake = mock.Mock(return_value={"ok": True, "cause": "c", "steps": [], "confidence": "low", "model": "m", "sent": {}})
+        with mock.patch.object(esp_ai, "explain", fake):
+            self.run_cli("explain", "--port", "COM9", "--json", env={"NEBIUS_API_KEY": ""})
+        self.assertEqual(fake.call_args.kwargs["api_key"], "FILEKEY")
+
+
 class CliExplainTest(unittest.TestCase):
     def setUp(self):
         os.environ["ESP32_BRINGUP_HOME"] = tempfile.mkdtemp()

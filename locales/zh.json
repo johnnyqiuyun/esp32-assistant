@@ -175,7 +175,7 @@
   "ai.confidence.unknown": "把握：未知",
   "ai.credit": "由 {model}（Nebius Token Factory）分析，用时 {seconds} 秒",
   "ai.sent": "发送的内容：芯片信息、运行摘要、最近 {lines} 行日志",
-  "ai.error.no_key": "还没设置 Nebius API key：在 PowerShell 运行 setx NEBIUS_API_KEY \"你的key\"，然后重启 Velloc",
+  "ai.error.no_key": "还没有 Nebius API key。先 setx NEBIUS_API_KEY \"你的key\"，再新开一个命令行窗口运行：python \"%USERPROFILE%\\.velloc\\plugins\\esp32s3-bringup\\scripts\\esp32_bringup.py\" ai-key import（Velloc 不会把环境变量交给插件，所以要导入一次）",
   "ai.error.bad_key": "Nebius API key 无效，请在 Token Factory 控制台重新复制",
   "ai.error.bad_model": "找不到这个模型，请检查 ESP32_AI_MODEL 设置",
   "ai.error.network": "连不上 Nebius Token Factory，请检查网络",
