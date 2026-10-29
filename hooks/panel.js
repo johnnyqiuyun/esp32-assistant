@@ -38,12 +38,15 @@ const PORTS_TIMEOUT_MS = 10000
 const PROBE_TIMEOUT_MS = 40000
 const PY_CHECK_TIMEOUT_MS = 10000
 const STORE_KEY = 'boards'
+const VIEW = { plugin: 'esp32s3-bringup', key: 'view' } // the pane's view, in $.state (types/index.d.ts)
 const STORE_ALIAS_EXIT = 49 // the Microsoft Store "python" placeholder
 const BACKGROUND_POLL = true
 const STATUS_LINE = false
 
 export function register(on) {
-  let root
+  // The engine's interface, reached only through closures made in a hook ($ is never stored or passed:
+  // Claude Code refuses a module that does). Velloc runs the same code.
+  let io = null
   let t = key => key
   let python = null // argv prefix of a working interpreter
   let pythonResolved = false // a failed lookup is cached too; Refresh or /esp32 retries it
@@ -69,8 +72,8 @@ export function register(on) {
   const logMore = {} // port -> show 200 lines instead of 30
   const flashDismissed = {} // port -> startedAt of the flash result the person closed
   const ai = {} // port -> AI diagnosis: { state: 'running' } | result of `explain --json` with state 'done' | 'failed'
-  const ref = $ => ({ plugin: $.plugin.name, key: 'view' })
-  const script = $ => `${$.plugin.root}/scripts/esp32_bringup.py`
+  let pluginRoot = ''
+  const script = () => `${pluginRoot}/scripts/esp32_bringup.py`
 
   async function quietly(action, fallback) {
     try { return await action() } catch { return fallback }
@@ -96,17 +99,17 @@ export function register(on) {
     }
   }
 
-  async function readJson($, path) {
-    return quietly(async () => JSON.parse(await $.fs.read(path)), null)
+  async function readJson(path) {
+    return quietly(async () => JSON.parse(await io.read(path)), null)
   }
 
-  async function readMonitors($) {
+  async function readMonitors() {
     if (!home) return
     const now = Date.now()
     const next = {}
     for (const { port } of scan) {
-      const state = await readJson($, `${home}\\monitors\\${port}.json`)
-      const flash = await readJson($, `${home}\\jobs\\${port}.flash.json`)
+      const state = await readJson(`${home}\\monitors\\${port}.json`)
+      const flash = await readJson(`${home}\\jobs\\${port}.flash.json`)
       const live = liveMonitor(state, now)
       next[port] = { monitor: live ?? (state ? { ...state, state: 'stopped' } : null), lines: live?.tail ?? state?.tail ?? [],
         flash: liveJob(flash, now) }
@@ -119,7 +122,7 @@ export function register(on) {
     const entry = scan.find(p => p.port === port)
     runs[port] = true
     lastStart[port] = Date.now()
-    void root.process.run([...python, script(root), 'monitor', 'run', '--port', port, '--key', entry?.serial ?? port, '--no-heartbeat'],
+    void io.run([...python, script(), 'monitor', 'run', '--port', port, '--key', entry?.serial ?? port, '--no-heartbeat'],
       { timeoutMs: MONITOR_RUN_TIMEOUT_MS })
       .catch(() => undefined)
       .finally(() => { delete runs[port] })
@@ -134,9 +137,9 @@ export function register(on) {
   }
 
   async function control(port, cmd) {
-    await quietly(() => runScript(root, ['monitor', cmd, '--port', port, '--json'], CONTROL_TIMEOUT_MS))
-    await readMonitors(root)
-    await quietly(() => publish(root))
+    await quietly(() => runScript(['monitor', cmd, '--port', port, '--json'], CONTROL_TIMEOUT_MS))
+    await readMonitors()
+    await quietly(() => publish())
   }
 
   function flashSizeOf(port) {
@@ -144,9 +147,9 @@ export function register(on) {
     return board?.info?.flash?.size ?? null
   }
 
-  async function askFlash($, port, path) {
+  async function askFlash(port, path) {
     const size = flashSizeOf(port)
-    const result = await quietly(() => runScript($, ['flash', '--port', port, path, '--json', ...(size ? ['--flash-size', size] : [])], CONTROL_TIMEOUT_MS))
+    const result = await quietly(() => runScript(['flash', '--port', port, path, '--json', ...(size ? ['--flash-size', size] : [])], CONTROL_TIMEOUT_MS))
     const out = result?.json
     if (out?.reason === 'needs_yes') flashDraft[port] = { path: out.plan.file, bytes: out.plan.bytes, confirming: true }
     else flashDraft[port] = { path, confirming: false, error: out?.detail ?? out?.reason ?? 'error' }
@@ -158,10 +161,10 @@ export function register(on) {
     const board = reconcile(scan, records, transient).find(b => b.port === port)
     const i = board?.info
     const description = i ? [i.chip, i.flash?.size && `${i.flash.size} flash`, i.psram && `${i.psram} PSRAM`].filter(Boolean).join(' · ') : ''
-    const lang = String(root.plugin.locale ?? '').startsWith('zh') ? 'zh' : 'en'
+    const lang = String(io.locale ?? '').startsWith('zh') ? 'zh' : 'en'
     ai[port] = { state: 'running' }
-    void quietly(() => publish(root))
-    void root.process.run([...python, script(root), 'explain', '--port', port, '--board', description, '--lang', lang, '--json'],
+    void quietly(() => publish())
+    void io.run([...python, script(), 'explain', '--port', port, '--board', description, '--lang', lang, '--json'],
       { timeoutMs: AI_TIMEOUT_MS })
       .then(ran => {
         let out = null
@@ -169,7 +172,7 @@ export function register(on) {
         ai[port] = out?.ok ? { ...out, state: 'done' } : { state: 'failed', reason: out?.reason ?? 'error' }
       })
       .catch(() => { ai[port] = { state: 'failed', reason: 'timeout' } })
-      .finally(() => quietly(() => publish(root)))
+      .finally(() => quietly(() => publish()))
   }
 
   function confirmFlash(port) {
@@ -177,7 +180,7 @@ export function register(on) {
     if (!draft?.confirming || !python) return
     const size = flashSizeOf(port)
     flashDraft[port] = { path: draft.path, confirming: false }
-    void root.process.run([...python, script(root), 'flash', '--port', port, draft.path, '--yes', '--wait', '--json',
+    void io.run([...python, script(), 'flash', '--port', port, draft.path, '--yes', '--wait', '--json',
       ...(size ? ['--flash-size', size] : [])], { timeoutMs: FLASH_TIMEOUT_MS })
       .then(ran => {
         let out = null
@@ -187,28 +190,28 @@ export function register(on) {
       })
       .catch(() => undefined)
       .finally(async () => {
-        await readMonitors(root)
-        await quietly(() => publish(root))
+        await readMonitors()
+        await quietly(() => publish())
       })
   }
 
-  async function publish($) {
+  async function publish() {
     const view = currentView()
-    publishing = publishing.catch(() => undefined).then(() => $.state.set(ref($), view))
+    publishing = publishing.catch(() => undefined).then(() => io.setView(view))
     await publishing
-    if (STATUS_LINE) await quietly(() => $.ui.status(statusText(view, t)))
+    if (STATUS_LINE) await quietly(() => io.status(statusText(view, t)))
   }
 
-  async function resolvePython($) {
+  async function resolvePython() {
     pythonResolved = true
     const env = {
-      ESP_PYTHON: await quietly(() => $.env.get('ESP_PYTHON')),
-      LOCALAPPDATA: await quietly(() => $.env.get('LOCALAPPDATA')),
+      ESP_PYTHON: await quietly(() => io.env.ESP_PYTHON()),
+      LOCALAPPDATA: await quietly(() => io.env.LOCALAPPDATA()),
     }
     let runnable = null
     for (const candidate of pythonCandidates(env)) {
-      if (candidate.length === 1 && !(await quietly(() => $.fs.exists(candidate[0]), false))) continue
-      const ran = await quietly(() => $.process.run([...candidate, '-c', 'import serial, esptool'], { timeoutMs: PY_CHECK_TIMEOUT_MS }))
+      if (candidate.length === 1 && !(await quietly(() => io.exists(candidate[0]), false))) continue
+      const ran = await quietly(() => io.run([...candidate, '-c', 'import serial, esptool'], { timeoutMs: PY_CHECK_TIMEOUT_MS }))
       if (!ran || ran.exitCode === STORE_ALIAS_EXIT) continue
       if (ran.exitCode === 0) {
         python = candidate
@@ -222,21 +225,21 @@ export function register(on) {
     return false
   }
 
-  async function runScript($, args, timeoutMs) {
-    const ran = await $.process.run([...python, script($), ...args], { timeoutMs })
+  async function runScript(args, timeoutMs) {
+    const ran = await io.run([...python, script(), ...args], { timeoutMs })
     return { exitCode: ran?.exitCode, json: JSON.parse(String(ran?.stdout ?? '').trim().split(/\r?\n/).at(-1)) }
   }
 
-  async function doScan($, withDrivers) {
+  async function doScan(withDrivers) {
     if (scanning) return
     scanning = true
     try {
-      if (!python && (pythonResolved || !(await resolvePython($)))) return
+      if (!python && (pythonResolved || !(await resolvePython()))) return
       // Velloc does not pass LOCALAPPDATA to mods, so the data folder comes from the script that writes it.
-      if (!home) home = (await quietly(() => runScript($, ['home', '--json'], PORTS_TIMEOUT_MS)))?.json?.home ?? ''
+      if (!home) home = (await quietly(() => runScript(['home', '--json'], PORTS_TIMEOUT_MS)))?.json?.home ?? ''
       let result
       try {
-        result = await runScript($, ['ports', '--json', ...(withDrivers ? ['--drivers'] : [])], PORTS_TIMEOUT_MS)
+        result = await runScript(['ports', '--json', ...(withDrivers ? ['--drivers'] : [])], PORTS_TIMEOUT_MS)
       } catch (error) {
         pythonState = { state: 'error', detail: String(error?.message ?? error) }
         return
@@ -251,41 +254,40 @@ export function register(on) {
       if (result.json.missing_driver !== null) missingDriver = result.json.missing_driver
       const present = new Set(scan.map(p => p.port))
       transient = Object.fromEntries(Object.entries(transient).filter(([port]) => present.has(port)))
-      records = (await quietly(() => $.store.get(STORE_KEY))) ?? records
+      records = (await quietly(() => io.storeGet(STORE_KEY))) ?? records
       stoppedPorts = forgetStopped(stoppedPorts, scan)
-      await readMonitors($)
+      await readMonitors()
       autostart()
-      if (added.length && !firstScan && !paneOpen) await quietly(() => $.ui.open({ id: PANE_ID, title: t('pane.title') }))
+      if (added.length && !firstScan && !paneOpen) await quietly(() => io.open({ id: PANE_ID, title: t('pane.title') }))
       firstScan = false
     } finally {
       scanning = false
-      await quietly(() => publish($))
+      await quietly(() => publish())
     }
   }
 
   async function probe(portName) {
-    const $ = root
     const port = scan.find(p => p.port === portName)
     if (!port || transient[portName]?.state === 'probing' || !python) return
     transient = { ...transient, [portName]: { state: 'probing' } }
-    await quietly(() => publish($))
+    await quietly(() => publish())
     let result
     try {
-      result = (await runScript($, ['probe', '--port', portName, '--json'], PROBE_TIMEOUT_MS)).json
+      result = (await runScript(['probe', '--port', portName, '--json'], PROBE_TIMEOUT_MS)).json
     } catch (error) {
       result = { ok: false, reason: 'no_response', detail: String(error?.message ?? error) }
     }
     if (result?.ok) {
-      const stored = (await quietly(() => $.store.get(STORE_KEY))) ?? records
+      const stored = (await quietly(() => io.storeGet(STORE_KEY))) ?? records
       records = applyProbe(stored, port, result)
-      await quietly(() => $.store.set(STORE_KEY, records))
+      await quietly(() => io.storeSet(STORE_KEY, records))
       const { [portName]: _done, ...rest } = transient
       // A device with no serial number has no record; keep its result for this session.
       transient = recordKey(port) ? rest : { ...rest, [portName]: { state: 'checked', info: result, probedAt: result.probed_at } }
     } else {
       transient = { ...transient, [portName]: { state: 'failed', reason: result?.reason ?? 'error', detail: result?.detail ?? null } }
     }
-    await quietly(() => publish($))
+    await quietly(() => publish())
   }
 
   const actions = {
@@ -293,7 +295,7 @@ export function register(on) {
     refresh: () => {
       python = null
       pythonResolved = false
-      void doScan(root, true)
+      void doScan(true)
     },
     monitorStart: port => {
       stoppedPorts = stoppedPorts.filter(p => p !== port)
@@ -310,53 +312,68 @@ export function register(on) {
     clear: port => {
       const lines = monitors[port]?.lines ?? []
       clearAt[port] = { at: lines.length ? lines.at(-1).i + 1 : 0, startedAt: monitors[port]?.monitor?.startedAt ?? null }
-      void quietly(() => publish(root))
+      void quietly(() => publish())
     },
     flashConfirm: port => {
       confirmFlash(port)
-      void quietly(() => publish(root))
+      void quietly(() => publish())
     },
     aiExplain: port => explainBoard(port),
     aiDismiss: port => {
       delete ai[port]
-      void quietly(() => publish(root))
+      void quietly(() => publish())
     },
     toggleDetails: port => {
       expanded[port] = !expanded[port]
-      void quietly(() => publish(root))
+      void quietly(() => publish())
     },
     setLogFilter: (port, filter) => {
       logFilter[port] = filter
-      void quietly(() => publish(root))
+      void quietly(() => publish())
     },
     toggleLogMore: port => {
       logMore[port] = !logMore[port]
-      void quietly(() => publish(root))
+      void quietly(() => publish())
     },
     flashDismiss: port => {
       flashDismissed[port] = monitors[port]?.flash?.startedAt ?? null
       delete flashDraft[port]
-      void quietly(() => publish(root))
+      void quietly(() => publish())
     },
     flashCancel: port => {
       delete flashDraft[port]
-      void quietly(() => publish(root))
+      void quietly(() => publish())
     },
   }
 
   on('session.start', async ($, e, next) => {
-    root = $
-    t = await loadTexts($)
+    pluginRoot = $.plugin.root
+    io = {
+      locale: $.plugin.locale,
+      run: (argv, options) => $.process.run(argv, options),
+      read: path => $.fs.read(path),
+      exists: path => $.fs.exists(path),
+      env: {
+        ESP_PYTHON: () => $.env.get('ESP_PYTHON'),
+        LOCALAPPDATA: () => $.env.get('LOCALAPPDATA'),
+      },
+      storeGet: key => $.store.get(key),
+      storeSet: (key, value) => $.store.set(key, value),
+      setView: value => $.state.set(VIEW, value),
+      status: text => $.ui.status(text),
+      open: options => $.ui.open(options),
+    }
+    t = await loadTexts(path => $.fs.read(path), pluginRoot, $.plugin.locale)
     await quietly(() => $.command.register({ name: COMMAND, description: t('command.description'), argumentHint: '[flash <file.bin> [COMx]]' }))
     records = (await quietly(() => $.store.get(STORE_KEY))) ?? {}
-    void doScan($, true) // finding Python and asking Windows for drivers takes seconds; don't hold the session start
+    void doScan(true) // finding Python and asking Windows for drivers takes seconds; don't hold the session start
     $.clock.every(TICK_MS, () => {
       if (!BACKGROUND_POLL && !paneOpen) return
       ticks += 1
       if (ticks % SCAN_EVERY === 0) {
-        void doScan(root, ticks % DRIVER_EVERY === 0)
+        void doScan(ticks % DRIVER_EVERY === 0)
       } else if (paneOpen || ticks % STATUS_CLOSED_EVERY === 1) {
-        void readMonitors(root).then(() => quietly(() => publish(root)))
+        void readMonitors().then(() => quietly(() => publish()))
       }
     })
     return next(e)
@@ -364,12 +381,12 @@ export function register(on) {
 
   on('command.run', { command: COMMAND }, async ($, e) => {
     if (!python) pythonResolved = false
-    await doScan($, true)
+    await doScan(true)
     const request = parseFlashArgs(e?.args ?? '', scan)
     if (request?.error) return { text: t(`flash.error.${request.error}`) }
     if (request) {
-      await askFlash($, request.port, request.path)
-      await quietly(() => publish($))
+      await askFlash(request.port, request.path)
+      await quietly(() => publish())
     }
     await $.ui.open({ id: PANE_ID, title: t('pane.title'), focus: true })
     return {}
@@ -384,7 +401,7 @@ export function register(on) {
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE_ID) return next(e)
     paneOpen = true
-    const read = await quietly(() => $.state.get(ref($)))
+    const read = await quietly(() => $.state.get(VIEW))
     const view = read && read.value && typeof read.value === 'object' ? read.value : currentView()
     return paneTree(await $.ui.resolve(e), view, t, actions)
   })

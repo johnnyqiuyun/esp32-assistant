@@ -28,11 +28,11 @@ export function translator(tables) {
   }
 }
 
-/** Reads the tables for `locale` (default `$.plugin.locale`) and answers a synchronous translator. */
-export async function loadTexts($, locale = $.plugin.locale) {
+/** Reads the tables for `locale` with `readFile(path)` from `<root>/locales/` and answers a synchronous translator. */
+export async function loadTexts(readFile, root, locale) {
   const read = async tag => {
     try {
-      return JSON.parse(await $.fs.read(`${$.plugin.root}/locales/${tag}.json`))
+      return JSON.parse(await readFile(`${root}/locales/${tag}.json`))
     } catch {
       return undefined
     }

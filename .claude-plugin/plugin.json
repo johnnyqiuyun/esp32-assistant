@@ -1,10 +1,11 @@
 {
   "name": "esp32s3-bringup",
-  "version": "0.4.0",
-  "description": "Find a USB-connected ESP32-S3, check it read-only, read its boot log, and (in Velloc) show online status and chip info in a pane.",
+  "version": "0.5.0",
+  "description": "ESP32 Assistant: find a USB-connected ESP32-S3, check it, watch its log, flash it, and ask NVIDIA Nemotron why it fails, in a live pane (Velloc and Claude Code).",
   "author": {
     "name": "Johnny Zong"
   },
   "license": "MIT",
-  "keywords": ["mod", "esp32", "esp32-s3", "esptool", "serial", "embedded", "hardware"]
+  "keywords": ["mod", "esp32", "esp32-s3", "esptool", "serial", "embedded", "hardware", "nemotron", "nebius"],
+  "types": "./types/index.d.ts"
 }
