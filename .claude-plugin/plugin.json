@@ -1,6 +1,6 @@
 {
   "name": "esp32s3-bringup",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Find a USB-connected ESP32-S3, check it read-only, read its boot log, and (in Velloc) show online status and chip info in a pane.",
   "author": {
     "name": "Johnny Zong"

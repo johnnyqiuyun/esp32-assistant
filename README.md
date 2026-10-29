@@ -41,6 +41,18 @@ the board once and reads the chip. After that the board is remembered by its USB
 serial number and is shown straight away whenever it is plugged in, with no reset.
 A port that appears later in the session opens the pane without taking focus.
 
+## AI diagnosis (NVIDIA Nemotron on Nebius Token Factory)
+
+Each board card has a **🤖 AI diagnosis** button. It becomes the highlighted action when the verdict is a problem
+(crash, reboot loop, download mode…). It sends the board description, the monitor summary (status, boots,
+last reset reason, error/warning counts, Wi-Fi state) and the last 80 log lines to an **NVIDIA Nemotron**
+model on **Nebius Token Factory**, and shows the likely cause with the log line that proves it, up to four
+fix steps, and a confidence. Nothing is sent until the button is pressed; the card says what was sent.
+
+- Key: `setx NEBIUS_API_KEY "your-key"` (then restart Velloc). Model: `ESP32_AI_MODEL`, default `nvidia/Nemotron-3_5-Lightning`.
+- CLI: `python scripts/esp32_bringup.py explain --port COM4 --lang en`.
+- Standard library only (`urllib`), OpenAI-compatible `chat/completions` API.
+
 ## Serial monitor
 
 Each board card in the pane has a monitor section: a summary line (running / crashed, boots,

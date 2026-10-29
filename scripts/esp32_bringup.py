@@ -21,6 +21,7 @@ except ImportError:
     sys.exit("pyserial is missing. Install with:\n  %s -m pip install --user pyserial esptool" % sys.executable)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import esp_ai  # noqa: E402
 import esp_monitor  # noqa: E402
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -519,6 +520,26 @@ def cmd_flash(a):
     return 0 if result["state"] == "done" else 1
 
 
+# ---------------------------------------------------------------- explain ---
+
+def cmd_explain(a):
+    if not a.port:
+        sys.exit("--port is required (or set ESP_PORT)")
+    state = esp_monitor.read_json(esp_monitor.paths(a.port)["state"])
+    ctx = esp_ai.context_from_state(state, board=a.board)
+    model = a.model or os.environ.get("ESP32_AI_MODEL") or esp_ai.DEFAULT_MODEL
+    result = esp_ai.explain(ctx, api_key=os.environ.get("NEBIUS_API_KEY"), model=model, lang=a.lang)
+    if a.json:
+        emit(result)
+    elif result["ok"]:
+        print("Cause (%s, confidence %s):\n  %s" % (result["model"], result["confidence"], result["cause"]))
+        for n, step in enumerate(result["steps"], 1):
+            print("  %d. %s" % (n, step))
+    else:
+        print("AI diagnosis failed: %s %s" % (result["reason"], result.get("detail", "")))
+    return 0 if result["ok"] else 1
+
+
 # ------------------------------------------------------------------- main ---
 
 def main(argv=None):
@@ -550,6 +571,14 @@ def main(argv=None):
     p.add_argument("--no-heartbeat", action="store_true", help="run: never exit for a missing heartbeat")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_monitor)
+
+    p = sub.add_parser("explain", help="ask NVIDIA Nemotron on Nebius Token Factory to diagnose the board (needs NEBIUS_API_KEY)")
+    p.add_argument("--port", default=os.environ.get("ESP_PORT"))
+    p.add_argument("--board", default="", help="one-line board description, e.g. 'ESP32-S3 · 16MB flash · 8MB PSRAM'")
+    p.add_argument("--lang", default="en", choices=sorted(esp_ai.LANGUAGES))
+    p.add_argument("--model", default=None, help="default: $ESP32_AI_MODEL or %s" % esp_ai.DEFAULT_MODEL)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_explain)
 
     p = sub.add_parser("home", help="print the data folder (monitor state, logs, flash jobs)")
     p.add_argument("--json", action="store_true")

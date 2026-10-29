@@ -22,6 +22,7 @@ the user the port, the file and its size and getting their explicit agreement.
 | `monitor start\|status\|stop\|pause\|resume\|reset\|retry\|list --port COMx` | Background serial monitor (see below). | `start` no; `reset` yes |
 | `reset --port COMx` | Resets the board (through its monitor when one runs). | Once |
 | `flash --port COMx FILE.bin --yes --wait` | **Writes** a merged image at 0x0 (see below). | Once, after writing |
+| `explain --port COMx [--board "ESP32-S3 · 16MB flash"] [--lang zh\|en]` | AI diagnosis: sends the monitor summary and the last 80 log lines to NVIDIA Nemotron on Nebius Token Factory and returns cause, fix steps and confidence. Needs `NEBIUS_API_KEY`; model from `ESP32_AI_MODEL` (default `nvidia/Nemotron-3_5-Lightning`). | No |
 
 `--port` defaults to `$ESP_PORT`. Once you know the board's port, pass it on every call.
 

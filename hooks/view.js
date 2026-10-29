@@ -114,6 +114,7 @@ export function paneTree(ui, view, t, actions) {
       card.push(monitorTree(ui, b, mon, t, actions, {
         clearAt, draft: view.flashDraft?.[b.port] ?? null, linkOpensFolder: !!view.linkOpensFolder, logDir: view.logDir ?? '', now,
         filter: view.logFilter?.[b.port] ?? 'all', more: !!view.logMore?.[b.port], dismissed: view.flashDismissed?.[b.port] ?? null,
+        ai: view.ai?.[b.port], tone: healths[n].tone,
       }))
     }
     children.push(Box({ key: `card:${b.port}`, flexDirection: 'column', gap: 1, children: card }))

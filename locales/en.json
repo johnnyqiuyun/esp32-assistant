@@ -164,5 +164,22 @@
   "footer.noScan": "Serial ports are scanned once Python is set up",
   "spec.flash": "{size} flash",
   "spec.psram": "{psram} PSRAM",
-  "spec.mhz": "{mhz} MHz"
+  "spec.mhz": "{mhz} MHz",
+  "btn.ai": "🤖 AI diagnosis",
+  "btn.aiAgain": "🤖 Diagnose again",
+  "ai.title": "🤖 AI diagnosis",
+  "ai.running": "🤖 NVIDIA Nemotron is reading the log…",
+  "ai.confidence.high": "Confidence: high",
+  "ai.confidence.medium": "Confidence: medium",
+  "ai.confidence.low": "Confidence: low",
+  "ai.confidence.unknown": "Confidence: unknown",
+  "ai.credit": "Analysed by {model} on Nebius Token Factory in {seconds} s",
+  "ai.sent": "Sent: chip info, run summary, last {lines} log lines",
+  "ai.error.no_key": "No Nebius API key yet: run setx NEBIUS_API_KEY \"your-key\" in PowerShell, then restart Velloc",
+  "ai.error.bad_key": "The Nebius API key was rejected; copy it again from the Token Factory console",
+  "ai.error.bad_model": "Model not found; check ESP32_AI_MODEL",
+  "ai.error.network": "Cannot reach Nebius Token Factory; check the network",
+  "ai.error.timeout": "The model took too long; try again",
+  "ai.error.server": "Nebius Token Factory returned an error; try again",
+  "ai.error.error": "AI diagnosis failed; try again"
 }

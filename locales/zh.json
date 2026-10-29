@@ -164,5 +164,22 @@
   "footer.noScan": "准备好 Python 后才能扫描串口",
   "spec.flash": "{size} Flash",
   "spec.psram": "{psram} PSRAM",
-  "spec.mhz": "{mhz} MHz"
+  "spec.mhz": "{mhz} MHz",
+  "btn.ai": "🤖 AI 诊断",
+  "btn.aiAgain": "🤖 重新诊断",
+  "ai.title": "🤖 AI 诊断结果",
+  "ai.running": "🤖 NVIDIA Nemotron 正在分析日志…",
+  "ai.confidence.high": "把握：高",
+  "ai.confidence.medium": "把握：中",
+  "ai.confidence.low": "把握：低",
+  "ai.confidence.unknown": "把握：未知",
+  "ai.credit": "由 {model}（Nebius Token Factory）分析，用时 {seconds} 秒",
+  "ai.sent": "发送的内容：芯片信息、运行摘要、最近 {lines} 行日志",
+  "ai.error.no_key": "还没设置 Nebius API key：在 PowerShell 运行 setx NEBIUS_API_KEY \"你的key\"，然后重启 Velloc",
+  "ai.error.bad_key": "Nebius API key 无效，请在 Token Factory 控制台重新复制",
+  "ai.error.bad_model": "找不到这个模型，请检查 ESP32_AI_MODEL 设置",
+  "ai.error.network": "连不上 Nebius Token Factory，请检查网络",
+  "ai.error.timeout": "模型回答超时，请稍后再试",
+  "ai.error.server": "Nebius Token Factory 返回了错误，请稍后再试",
+  "ai.error.error": "AI 诊断出错，请稍后再试"
 }

@@ -33,6 +33,7 @@ const AUTOSTART_BACKOFF_MS = 10000
 const MONITOR_RUN_TIMEOUT_MS = 24 * 3600 * 1000
 const FLASH_TIMEOUT_MS = 35 * 60 * 1000
 const CONTROL_TIMEOUT_MS = 10000
+const AI_TIMEOUT_MS = 90000 // explain allows the model 60 s
 const PORTS_TIMEOUT_MS = 10000
 const PROBE_TIMEOUT_MS = 40000
 const PY_CHECK_TIMEOUT_MS = 10000
@@ -67,6 +68,7 @@ export function register(on) {
   const logFilter = {} // port -> 'all' | 'problems' | 'wifi'
   const logMore = {} // port -> show 200 lines instead of 30
   const flashDismissed = {} // port -> startedAt of the flash result the person closed
+  const ai = {} // port -> AI diagnosis: { state: 'running' } | result of `explain --json` with state 'done' | 'failed'
   const ref = $ => ({ plugin: $.plugin.name, key: 'view' })
   const script = $ => `${$.plugin.root}/scripts/esp32_bringup.py`
 
@@ -90,6 +92,7 @@ export function register(on) {
       logFilter,
       logMore,
       flashDismissed,
+      ai,
     }
   }
 
@@ -147,6 +150,26 @@ export function register(on) {
     const out = result?.json
     if (out?.reason === 'needs_yes') flashDraft[port] = { path: out.plan.file, bytes: out.plan.bytes, confirming: true }
     else flashDraft[port] = { path, confirming: false, error: out?.detail ?? out?.reason ?? 'error' }
+  }
+
+  /** Ask NVIDIA Nemotron on Nebius Token Factory (`explain`) about the board on `port`; never blocks the pane. */
+  function explainBoard(port) {
+    if (ai[port]?.state === 'running' || !python) return
+    const board = reconcile(scan, records, transient).find(b => b.port === port)
+    const i = board?.info
+    const description = i ? [i.chip, i.flash?.size && `${i.flash.size} flash`, i.psram && `${i.psram} PSRAM`].filter(Boolean).join(' · ') : ''
+    const lang = String(root.plugin.locale ?? '').startsWith('zh') ? 'zh' : 'en'
+    ai[port] = { state: 'running' }
+    void quietly(() => publish(root))
+    void root.process.run([...python, script(root), 'explain', '--port', port, '--board', description, '--lang', lang, '--json'],
+      { timeoutMs: AI_TIMEOUT_MS })
+      .then(ran => {
+        let out = null
+        try { out = JSON.parse(String(ran?.stdout ?? '').trim().split(/\r?\n/).at(-1)) } catch {}
+        ai[port] = out?.ok ? { ...out, state: 'done' } : { state: 'failed', reason: out?.reason ?? 'error' }
+      })
+      .catch(() => { ai[port] = { state: 'failed', reason: 'timeout' } })
+      .finally(() => quietly(() => publish(root)))
   }
 
   function confirmFlash(port) {
@@ -291,6 +314,11 @@ export function register(on) {
     },
     flashConfirm: port => {
       confirmFlash(port)
+      void quietly(() => publish(root))
+    },
+    aiExplain: port => explainBoard(port),
+    aiDismiss: port => {
+      delete ai[port]
       void quietly(() => publish(root))
     },
     toggleDetails: port => {

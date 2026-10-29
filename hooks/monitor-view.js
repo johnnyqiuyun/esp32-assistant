@@ -56,6 +56,38 @@ function buttons(ui, port, state, t, actions) {
   return Box({ key: `mon-buttons:${port}`, flexDirection: 'row', gap: 1, children: list })
 }
 
+/**
+ * AI diagnosis by NVIDIA Nemotron on Nebius Token Factory (`esp32_bringup.py explain`).
+ * `opts.ai`: undefined | { state: 'running' } | { state: 'done', cause, steps, confidence, model, seconds, sent }
+ *            | { state: 'failed', reason }. The button is the main action when the verdict is a problem.
+ */
+function aiSection(ui, port, t, actions, opts) {
+  const { Box, Text, Button } = ui
+  const caption = (value, props = {}) => Text({ size: 'caption', wrap: 'wrap', ...props, children: [value] })
+  const ai = opts.ai
+  if (ai?.state === 'running') return Box({ key: `ai:${port}`, children: [caption(t('ai.running'), { color: 'cyan' })] })
+  const children = []
+  if (ai?.state === 'done') {
+    children.push(
+      Text({ size: 'caption', weight: 'semibold', color: 'cyan', children: [t('ai.title')] }),
+      Text({ size: 'body', wrap: 'wrap', children: [ai.cause] }),
+      ...(ai.steps ?? []).map((step, n) => caption(`${n + 1}. ${step}`)),
+      caption(t(`ai.confidence.${ai.confidence}`), { dimColor: true }),
+      caption(t('ai.credit', { model: ai.model, seconds: ai.seconds }), { dimColor: true }),
+      caption(t('ai.sent', { lines: ai.sent?.lines ?? 0 }), { dimColor: true }),
+    )
+  } else if (ai?.state === 'failed') {
+    children.push(caption(t(`ai.error.${ai.reason}`), { color: 'red' }))
+  }
+  const problem = opts.tone === 'error' || opts.tone === 'warn'
+  children.push(Box({ flexDirection: 'row', gap: 1, children: [
+    Button({ key: `ai-explain:${port}`, label: t(ai?.state === 'done' ? 'btn.aiAgain' : 'btn.ai'),
+      variant: problem && ai?.state !== 'done' ? 'primary' : 'secondary', onPress: () => actions.aiExplain(port) }),
+    ...(ai ? [Button({ key: `ai-dismiss:${port}`, label: t('btn.dismiss'), variant: 'secondary', onPress: () => actions.aiDismiss(port) })] : []),
+  ] }))
+  return Box({ key: `ai:${port}`, flexDirection: 'column', children })
+}
+
 function logSection(ui, port, mon, t, actions, opts) {
   const { Box, Text, Button } = ui
   const s = mon?.monitor?.summary ?? {} // a stopped monitor still describes the lines it left
@@ -153,8 +185,10 @@ export function monitorTree(ui, board, mon, t, actions, opts) {
     }
   }
   // While flashing, the flash job owns the port; monitor controls would only confuse.
+  const hasOutput = !!monitor || (mon?.lines ?? []).length > 0
+  if (hasOutput && !flashing) children.push(aiSection(ui, port, t, actions, opts))
   if (!flashing) children.push(buttons(ui, port, monitor?.state, t, actions))
-  if (monitor || (mon?.lines ?? []).length) children.push(logSection(ui, port, mon, t, actions, opts))
+  if (hasOutput) children.push(logSection(ui, port, mon, t, actions, opts))
   children.push(flashSection(ui, port, mon?.flash, t, actions, opts))
   children.push(opts.linkOpensFolder
     ? Link({ key: `logdir:${port}`, href: `file:///${opts.logDir.replace(/\\/g, '/')}`, label: t('mon.logDir', { dir: opts.logDir }) })
