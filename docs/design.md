@@ -36,7 +36,7 @@
 
 **硬件（今天实测）**
 - 板子 UART 口是 CP2102N（VID `10C4` PID `EA60`），驱动装好后为 COM4。
-- esptool v5.6.0（`C:\Users\johnny.zong\AppData\Local\Programs\Python\Python313\python.exe -m esptool`）
+- esptool v5.6.0（`%USERPROFILE%\AppData\Local\Programs\Python\Python313\python.exe -m esptool`）
   `chip-id` / `flash-id` 输出：ESP32-S3 (QFN56) rev v0.2，Embedded PSRAM 8MB (AP_3v3)，40MHz 晶振，
   MAC 74:4d:bd:9d:b5:44，Flash 厂商 c8 设备 4018，16MB，quad，3.3V。
 - 启动日志 115200 波特，单一波特率（不像 ESP8266 有 74880 阶段）。打开串口时 DTR/RTS 都不拉，

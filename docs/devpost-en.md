@@ -1,6 +1,7 @@
 # ESP32 Assistant — Devpost description (English)
 
 **Track:** Physical AI
+**Repository:** https://github.com/johnnyqiuyun/esp32-assistant (MIT)
 **Tagline:** Plug in an ESP32-S3 and know in seconds whether it works, what it is doing, and — with NVIDIA Nemotron on Nebius — why it is failing and how to fix it.
 
 ## Inspiration
