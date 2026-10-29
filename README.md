@@ -100,11 +100,14 @@ The image must start with 0xE9 (an ELF or other file is refused) and fit the boa
 `%USERPROFILE%\.velloc\enabled-plugins.json`, and restart Velloc. Velloc does not
 reload a changed mod until it restarts.
 
-**Claude Code:**
+**Claude Code:** (from GitHub, or give a local clone's path instead of `johnnyqiuyun/esp32-assistant`)
 ```
-/plugin marketplace add J:\2_MY_WORK\ESP32\esp32s3-bringup
+/plugin marketplace add johnnyqiuyun/esp32-assistant
 /plugin install esp32s3-bringup@esp32s3-bringup
 ```
+Then restart Claude Code. Claude Code has no pane; use the commands
+`/esp32s3-bringup:bringup`, `/esp32s3-bringup:log`, `/esp32s3-bringup:flash`, or just ask
+("is my ESP32 working?", "why does it keep rebooting?").
 
 ## Script usage
 
