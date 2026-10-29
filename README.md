@@ -105,9 +105,9 @@ reload a changed mod until it restarts.
 /plugin marketplace add johnnyqiuyun/esp32-assistant
 /plugin install esp32s3-bringup@esp32s3-bringup
 ```
-Then restart Claude Code. Claude Code has no pane; use the commands
-`/esp32s3-bringup:bringup`, `/esp32s3-bringup:log`, `/esp32s3-bringup:flash`, or just ask
-("is my ESP32 working?", "why does it keep rebooting?").
+Then restart Claude Code (or run `/reload-plugins`) and type `/esp32`: the same live pane opens beside the
+chat (v0.5+). You can also use `/esp32s3-bringup:bringup`, `/esp32s3-bringup:log`,
+`/esp32s3-bringup:flash`, or just ask ("is my ESP32 working?", "why does it keep rebooting?").
 
 ## Script usage
 
