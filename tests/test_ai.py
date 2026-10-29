@@ -48,6 +48,12 @@ class PromptTest(unittest.TestCase):
         self.assertIn("Chinese", msgs[0]["content"])
         self.assertIn("JSON", msgs[0]["content"])
 
+    def test_system_prompt_guards_against_false_alarms(self):
+        system = esp_ai.build_messages({"board": "", "lines": []}, lang="en")[0]["content"]
+        self.assertIn("boots seen: 0", system)
+        self.assertIn("healthy", system)
+        self.assertIn("re-flash", system)
+
 
 class ParseTest(unittest.TestCase):
     def test_parse_plain_json(self):
@@ -61,6 +67,14 @@ class ParseTest(unittest.TestCase):
     def test_parse_thinking_block_ignored(self):
         text = '<think>{"cause": "wrong"}</think>{"cause": "right", "steps": [], "confidence": "low"}'
         self.assertEqual(esp_ai.parse_answer(text)["cause"], "right")
+
+    def test_parse_repairs_stray_quote_after_list(self):
+        # Seen from nvidia/Nemotron-3_5-Lightning on 2026-10-29: `]"` before the next key.
+        text = '{"cause": "c", "steps": ["a", "b"]", "confidence": "medium"}'
+        self.assertEqual(esp_ai.parse_answer(text), {"cause": "c", "steps": ["a", "b"], "confidence": "medium"})
+
+    def test_parse_repairs_trailing_comma(self):
+        self.assertEqual(esp_ai.parse_answer('{"cause": "c", "steps": ["a",], "confidence": "low",}')["steps"], ["a"])
 
     def test_parse_not_json_falls_back_to_text(self):
         out = esp_ai.parse_answer("The board resets because the watchdog fires.")
@@ -83,6 +97,7 @@ class CallTest(unittest.TestCase):
         self.assertEqual(seen["url"], "https://api.tokenfactory.nebius.com/v1/chat/completions")
         self.assertEqual(seen["body"]["model"], "nvidia/M")
         self.assertIn("max_tokens", seen["body"])
+        self.assertEqual(seen["body"]["reasoning_effort"], "none")  # otherwise Nemotron spends the budget thinking aloud
         self.assertEqual(seen["auth"], "Bearer KEY")
         self.assertEqual((out["ok"], out["cause"], out["model"]), (True, "c", "nvidia/M"))
         self.assertEqual(out["sent"]["lines"], esp_ai.CONTEXT_LINES)

@@ -15,6 +15,7 @@ BASE_URL = "https://api.tokenfactory.nebius.com/v1"  # Nebius Token Factory, Ope
 DEFAULT_MODEL = "nvidia/Nemotron-3_5-Lightning"
 CONTEXT_LINES = 80
 MAX_TOKENS = 900
+REASONING_EFFORT = "none"
 TIMEOUT_S = 60
 CONFIDENCE = ("high", "medium", "low")
 
@@ -26,7 +27,12 @@ SYSTEM = (
     "You are an expert ESP32-S3 firmware engineer (ESP-IDF and Arduino). You are given facts about a board "
     "and the end of its serial log. Find the most likely root cause of any problem (crash, reboot loop, "
     "watchdog, brown-out, Wi-Fi failure, missing firmware, download mode) and how to fix it. Quote the log "
-    "line that proves it. If everything looks healthy, say so. Be concrete and brief.\n"
+    "line that proves it. Be concrete and brief.\n"
+    "Rules: 'boots seen: 0' and 'last reset: None' only mean monitoring started after the board booted; they "
+    "are not a problem. A log that only repeats the program's own prints, with no errors, warnings, panics or "
+    "resets, means the program is running: say it looks healthy, describe what it is doing, and suggest at "
+    "most a useful check. Never suggest to re-flash, erase or change the partition table unless the log shows "
+    "missing or invalid firmware. Do not invent problems the facts do not show.\n"
     "Reply with JSON only, no other text: "
     '{"cause": "<one or two sentences>", "steps": ["<fix step>", "..."], "confidence": "high|medium|low"}. '
     "At most 4 steps. Write cause and steps in %s."
@@ -93,6 +99,12 @@ def build_messages(ctx, lang="en"):
     ]
 
 
+def _repair(candidate):
+    """Fix the small JSON slips small models make: a stray quote after a list, trailing commas."""
+    candidate = re.sub(r'\]\s*"\s*,', "],", candidate)
+    return re.sub(r",\s*([}\]])", r"\1", candidate)
+
+
 def parse_answer(text):
     """The model's reply as {cause, steps, confidence}; tolerant of fences, chatter and think blocks."""
     text = _THINK.sub("", text or "").strip()
@@ -102,7 +114,7 @@ def parse_answer(text):
         candidates.append(text[start:end + 1])
     for candidate in candidates:
         try:
-            data = json.loads(candidate)
+            data = json.loads(_repair(candidate))
         except ValueError:
             continue
         if isinstance(data, dict) and data.get("cause"):
@@ -119,8 +131,10 @@ def explain(ctx, *, api_key, model, lang, opener=urllib.request.urlopen, base_ur
     """Ask the model; always returns a dict with `ok`, and `reason` when not ok."""
     if not api_key:
         return {"ok": False, "reason": "no_key"}
+    # reasoning_effort "none": with any thinking, Nemotron 3.5 Lightning writes its reasoning into the reply
+    # and runs out of tokens before the JSON (measured 2026-10-29: none 2.2 s with JSON, low 5.9 s cut off).
     body = json.dumps({"model": model, "messages": build_messages(ctx, lang), "temperature": 0.2,
-                       "max_tokens": MAX_TOKENS}).encode("utf-8")
+                       "max_tokens": MAX_TOKENS, "reasoning_effort": REASONING_EFFORT}).encode("utf-8")
     req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions", data=body, method="POST",
                                  headers={"Content-Type": "application/json", "Authorization": "Bearer " + api_key})
     started = time.time()
