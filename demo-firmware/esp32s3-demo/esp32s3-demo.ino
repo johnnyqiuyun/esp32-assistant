@@ -19,7 +19,7 @@
 
 static const char *SCENARIO_NAMES[] = {"healthy", "crash", "wifi", "watchdog"};
 static const char *MISSING_AP = "esp32-assistant-demo-missing-ap";
-static const int BOOT_PIN = 0;
+static const int DEMO_BUTTON_PIN = 0;
 
 #define LOG(level, tag, fmt, ...) Serial.printf("%c (%lu) %s: " fmt "\n", level, (unsigned long)millis(), tag, ##__VA_ARGS__)
 
@@ -52,7 +52,7 @@ static void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  pinMode(BOOT_PIN, INPUT_PULLUP);
+  pinMode(DEMO_BUTTON_PIN, INPUT_PULLUP);
   LOG('I', "demo", "ESP32 Assistant demo firmware v1, scenario: %s", SCENARIO_NAMES[DEMO_SCENARIO]);
   LOG('I', "demo", "chip %s rev %d, %d cores, flash %u MB, PSRAM %u KB free", ESP.getChipModel(), ESP.getChipRevision(),
       ESP.getChipCores(), ESP.getFlashChipSize() / (1024 * 1024), ESP.getFreePsram() / 1024);
@@ -85,7 +85,7 @@ void loop() {
   if (DEMO_SCENARIO == 1 && now > 5000) crashNow("sensor buffer used before allocation");
 
   if (DEMO_SCENARIO == 0) {
-    int button = digitalRead(BOOT_PIN);
+    int button = digitalRead(DEMO_BUTTON_PIN);
     if (lastButton == HIGH && button == LOW) crashNow("BOOT pressed: simulating a bug");
     lastButton = button;
   }
