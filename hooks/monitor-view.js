@@ -18,6 +18,7 @@ const LINE_STYLE = {
   wifi: { color: 'cyan' },
   info: {},
 }
+const JUNK = /[\u0000-\u0008\u000b-\u001f\u007f�]/g
 const LOG_LINES = 30
 const LOG_LINES_MORE = 200
 const FILTERS = [['all', 'btn.filterAll'], ['problems', 'btn.filterProblems'], ['wifi', 'btn.filterWifi']]
@@ -107,7 +108,9 @@ function logSection(ui, port, mon, t, actions, opts) {
     children.push(Text({ size: 'caption', dimColor: true, children: [t(empty)] }))
   }
   for (const line of shown) {
-    children.push(Text({ key: `line:${port}:${line.i}`, size: 'caption', mono: true, wrap: 'wrap', ...LINE_STYLE[lineLevel(line.text)], children: [line.text] }))
+    // Logs written before the monitor cleaned lines can hold NUL and other control characters, which Velloc cannot render.
+    const text = line.text.replace(JUNK, '')
+    children.push(Text({ key: `line:${port}:${line.i}`, size: 'caption', mono: true, wrap: 'wrap', ...LINE_STYLE[lineLevel(text)], children: [text] }))
   }
   if (total > LOG_LINES) {
     children.push(Button({ key: `more:${port}`, label: t(opts.more ? 'btn.less' : 'btn.more'), variant: 'secondary',

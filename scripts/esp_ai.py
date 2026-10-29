@@ -20,6 +20,7 @@ TIMEOUT_S = 60
 CONFIDENCE = ("high", "medium", "low")
 
 _STAMP = re.compile(r"^\d\d:\d\d:\d\d\.\d{3} ")
+_JUNK = re.compile("[\x00-\x08\x0b-\x1f\x7f\ufffd]")  # reset garbage in older logs
 _THINK = re.compile(r"<think>.*?</think>", re.S)
 _FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
 
@@ -74,7 +75,7 @@ def clear_key(home):
 def context_from_state(state, board=""):
     """The facts sent to the model, from a monitor state file."""
     state = state or {}
-    lines = [_STAMP.sub("", item.get("text", ""), count=1) for item in (state.get("tail") or [])]
+    lines = [_JUNK.sub("", _STAMP.sub("", item.get("text", ""), count=1)) for item in (state.get("tail") or [])]
     return {"board": board or "", "monitor": state.get("state"), "summary": state.get("summary") or {},
             "lines": lines[-CONTEXT_LINES:]}
 

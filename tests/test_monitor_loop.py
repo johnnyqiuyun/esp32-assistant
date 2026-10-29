@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import time
@@ -221,6 +222,16 @@ class MonitorLoopTest(unittest.TestCase):
         m = self.make()
         self.assertTrue(m.step())
         self.assertEqual(self.state()["state"], "running")
+
+    def test_reset_garbage_is_cleaned_and_boot_counted(self):
+        # Seen on COM4 after every reset: "\xff\x00\xffESP-ROM:esp32s3-20210327" on one line.
+        self.next_serial = FakeSerial([b"Rebooting...\r\n\xff\x00\xffESP-ROM:esp32s3-20210327\r\nrst:0xc (RTC_SW_CPU_RST),boot:0x8\r\n"])
+        m = self.make()
+        m.step()
+        m.step()
+        self.assertEqual(self.log_lines(), ["Rebooting...", "ESP-ROM:esp32s3-20210327", "rst:0xc (RTC_SW_CPU_RST),boot:0x8"])
+        self.assertEqual(self.state()["summary"]["boots"], 1)
+        self.assertNotIn("\x00", json.dumps(self.state()["tail"]))
 
     def test_tail_in_state(self):
         saved = mon.TAIL_LINES

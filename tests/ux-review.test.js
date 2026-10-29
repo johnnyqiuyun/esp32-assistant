@@ -179,3 +179,11 @@ test('test_reset_hint_only_before_first_identify', () => {
   assert.ok(!texts(render()).includes(zh['probe.resetsBoard']))
   assert.ok(texts(render({ boards: [board({ state: 'unprobed', info: null })], monitors: {} })).includes(zh['probe.resetsBoard']))
 })
+
+test('test_log_lines_rendered_without_control_chars', () => {
+  // Lines written before the monitor cleaned resets: "\ufffd\x00\ufffdESP-ROM:…" broke Velloc's pane.
+  const lines = [{ i: 0, text: '12:00:00.000 \ufffd\u0000\ufffdESP-ROM:esp32s3-20210327' }]
+  const s = texts(render({ monitors: { COM4: { monitor: monitor(), lines, flash: null } } }))
+  assert.ok(s.includes('ESP-ROM:esp32s3-20210327'))
+  assert.ok(!/[\u0000-\u0008\u000b-\u001f\u007f\ufffd]/.test(s))
+})

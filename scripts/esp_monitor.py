@@ -41,6 +41,14 @@ def strip_stamp(line):
     return _STAMP.sub("", line, count=1)
 
 
+# Control characters and undecodable bytes; a reset leaves "\xff\x00\xff" in front of the ROM banner.
+_JUNK = re.compile("[\x00-\x08\x0b-\x1f\x7f�]")
+
+
+def clean_line(text):
+    return _JUNK.sub("", text)
+
+
 class LiveSummary:
     """Running facts about the board, fed one log line at a time."""
 
@@ -55,9 +63,9 @@ class LiveSummary:
         self.wifi = {"state": "unknown", "ssid": None, "ip": None, "reason": None, "rssi": None}
 
     def feed(self, line, now):
-        text = strip_stamp(line)
+        text = clean_line(strip_stamp(line))
         self.seen = True
-        if text.startswith("ESP-ROM:"):
+        if "ESP-ROM:" in text:
             self.boots += 1
             self.last_boot_at = now
             self.crashed = False
@@ -348,7 +356,7 @@ class Monitor:
             return
         *complete, self.partial = (self.partial + data).split(b"\n")
         if complete:
-            self._write_lines([c.rstrip(b"\r").decode("utf-8", errors="replace") for c in complete])
+            self._write_lines([clean_line(c.decode("utf-8", errors="replace")) for c in complete])
 
     # -- control
     def _control(self):

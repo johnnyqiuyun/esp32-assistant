@@ -39,6 +39,10 @@ class PromptTest(unittest.TestCase):
         self.assertEqual(ctx["lines"][-1], "line-119")
         self.assertEqual(ctx["board"], "ESP32-S3 · 16MB flash · 8MB PSRAM")
 
+    def test_context_lines_cleaned(self):
+        state = {"tail": [{"i": 0, "text": "12:00:00.000 �\x00�ESP-ROM:esp32s3-20210327"}]}
+        self.assertEqual(esp_ai.context_from_state(state)["lines"], ["ESP-ROM:esp32s3-20210327"])
+
     def test_messages_mention_facts_and_language(self):
         msgs = esp_ai.build_messages(esp_ai.context_from_state(STATE, board="ESP32-S3"), lang="zh")
         self.assertEqual([m["role"] for m in msgs], ["system", "user"])

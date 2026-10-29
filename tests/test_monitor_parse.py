@@ -46,6 +46,11 @@ class LiveSummaryTest(unittest.TestCase):
         d = s.to_dict()
         self.assertEqual((d["status"], d["boots"], d["last_reset"]), ("running", 2, "0xc (RTC_SW_CPU_RST)"))
 
+    def test_summary_boot_banner_after_garbage(self):
+        s = mon.LiveSummary()
+        feed(s, "�\x00�ESP-ROM:esp32s3-20210327")
+        self.assertEqual(s.to_dict()["boots"], 1)
+
     def test_summary_counts(self):
         s = mon.LiveSummary()
         feed(s, "E (1) x: y", "W (1) x: y", "W (2) x: y")
